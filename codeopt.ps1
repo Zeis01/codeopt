@@ -60,15 +60,17 @@ function Set-PowerValue {
 $Tweaks = [System.Collections.Generic.List[object]]::new()
 function T {
     param([string]$Cat, [string]$Name, [string]$Desc, [bool]$Rec, [scriptblock]$Do)
-    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Rec = $Rec; Do = $Do; Sel = $false })
+    $Tags = ''
+    if ($Desc -match '^\[(.+?)\]\s*(.*)$') { $Tags = $Matches[1]; $Desc = $Matches[2] }
+    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Tags = $Tags; Fps = ($Tags -match '\+FPS'); Rec = $Rec; Do = $Do; Sel = $false })
 }
 
-T 'Safety' 'Create System Restore Point' 'Creates a restore point so every change can be rolled back from System Restore.' $true {
+T 'Safety' 'Create System Restore Point' '[SAFE] Creates a restore point so every change can be rolled back from System Restore.' $true {
     Enable-ComputerRestore -Drive "$env:SystemDrive\"
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
     Checkpoint-Computer -Description 'CodeOpt' -RestorePointType 'MODIFY_SETTINGS'
 }
-T 'Safety' 'Backup Registry Hives' 'Exports HKLM\SYSTEM and HKCU\Software to Documents\CodeOpt-Backup.' $false {
+T 'Safety' 'Backup Registry Hives' '[SAFE] Exports HKLM\SYSTEM and HKCU\Software to Documents\CodeOpt-Backup.' $false {
     $dir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) ('CodeOpt-Backup\' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
     reg.exe export 'HKLM\SYSTEM\CurrentControlSet' "$dir\System.reg" /y | Out-Null
@@ -76,7 +78,7 @@ T 'Safety' 'Backup Registry Hives' 'Exports HKLM\SYSTEM and HKCU\Software to Doc
     reg.exe export 'HKCU\Control Panel' "$dir\ControlPanel.reg" /y | Out-Null
 }
 
-T 'Power' 'Ultimate Performance Plan' 'Unlocks and activates a tuned Ultimate Performance power plan.' $true {
+T 'Power' 'Ultimate Performance Plan' '[+FPS +1% LOWS] Unlocks and activates a tuned Ultimate Performance power plan.' $true {
     $out = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
     $guid = [regex]::Match(($out -join ' '), '[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}').Value
     if ($guid) {
@@ -87,38 +89,38 @@ T 'Power' 'Ultimate Performance Plan' 'Unlocks and activates a tuned Ultimate Pe
     Set-PowerValue 'SUB_DISK' 'DISKIDLE' 0
     Set-PowerValue 'SUB_SLEEP' 'STANDBYIDLE' 0
 }
-T 'Power' 'Disable Core Parking' 'Keeps all CPU cores awake to avoid wake-up latency.' $true {
+T 'Power' 'Disable Core Parking' '[+FPS -STUTTER] Keeps all CPU cores awake to avoid wake-up latency.' $true {
     Set-PowerValue 'SUB_PROCESSOR' 'CPMINCORES' 100
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583' 'ValueMax' 0
 }
-T 'Power' 'Disable USB Selective Suspend' 'Prevents USB devices like mice and headsets from sleeping.' $true {
+T 'Power' 'Disable USB Selective Suspend' '[-INPUT LAG] Prevents USB devices like mice and headsets from sleeping.' $true {
     Set-PowerValue '2a737441-1930-4402-8d77-b2bebba308a3' '48e6b7a6-50f5-4782-a5d4-53bb8f07e226' 0
 }
-T 'Power' 'Disable PCIe Link State Power Saving' 'Turns off ASPM so GPU and NVMe links stay at full speed.' $true {
+T 'Power' 'Disable PCIe Link State Power Saving' '[+FPS -STUTTER] Turns off ASPM so GPU and NVMe links stay at full speed.' $true {
     Set-PowerValue 'SUB_PCIEXPRESS' 'ASPM' 0
 }
-T 'Power' 'Disable Power Throttling' 'Stops Windows from throttling background processes.' $true {
+T 'Power' 'Disable Power Throttling' '[+FPS] Stops Windows from throttling background processes.' $true {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling' 'PowerThrottlingOff' 1
 }
-T 'Power' 'Disable Hibernation' 'Turns off hibernation and deletes hiberfil.sys to free disk space.' $true {
+T 'Power' 'Disable Hibernation' '[+DISK] Turns off hibernation and deletes hiberfil.sys to free disk space.' $true {
     powercfg -h off | Out-Null
 }
-T 'Power' 'Disable Fast Startup' 'Forces a clean boot each time, fixing driver and uptime issues.' $true {
+T 'Power' 'Disable Fast Startup' '[+STABILITY] Forces a clean boot each time, fixing driver and uptime issues.' $true {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
 }
 
-T 'Gaming' 'Enable Game Mode' 'Lets Windows prioritize the game and pause background updates.' $true {
+T 'Gaming' 'Enable Game Mode' '[+FPS] Lets Windows prioritize the game and pause background updates.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled' 1
     Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AllowAutoGameMode' 1
 }
-T 'Gaming' 'Disable Game Bar & Game DVR' 'Removes background recording and the Xbox Game Bar overlay.' $true {
+T 'Gaming' 'Disable Game Bar & Game DVR' '[+FPS -STUTTER] Removes background recording and the Xbox Game Bar overlay.' $true {
     Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' 0
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' 0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' 'AllowGameDVR' 0
     Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'UseNexusForGameBarEnabled' 0
     Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'ShowStartupPanel' 0
 }
-T 'Gaming' 'Disable Fullscreen Optimizations' 'Uses true exclusive fullscreen for lower input latency.' $true {
+T 'Gaming' 'Disable Fullscreen Optimizations' '[+FPS -INPUT LAG] Uses true exclusive fullscreen for lower input latency.' $true {
     $p = 'HKCU:\System\GameConfigStore'
     Set-Reg $p 'GameDVR_FSEBehaviorMode' 2
     Set-Reg $p 'GameDVR_FSEBehavior' 2
@@ -126,13 +128,13 @@ T 'Gaming' 'Disable Fullscreen Optimizations' 'Uses true exclusive fullscreen fo
     Set-Reg $p 'GameDVR_DXGIHonorFSEWindowsCompatible' 1
     Set-Reg $p 'GameDVR_EFSEFeatureFlags' 0
 }
-T 'Gaming' 'Optimizations for Windowed Games' 'Enables flip-model presentation for borderless and windowed games.' $true {
+T 'Gaming' 'Optimizations for Windowed Games' '[+FPS -INPUT LAG] Enables flip-model presentation for borderless and windowed games.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' 'DirectXUserGlobalSettings' 'SwapEffectUpgradeEnable=1;' 'String'
 }
-T 'Gaming' 'Hardware-Accelerated GPU Scheduling' 'Lets the GPU manage its own memory scheduling. Needs a supported GPU.' $false {
+T 'Gaming' 'Hardware-Accelerated GPU Scheduling' '[+FPS -LATENCY] Lets the GPU manage its own memory scheduling. Needs a supported GPU.' $false {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode' 2
 }
-T 'Gaming' 'MMCSS Game Priority' 'Raises GPU and CPU scheduling priority for games.' $true {
+T 'Gaming' 'MMCSS Game Priority' '[+FPS +1% LOWS] Raises GPU and CPU scheduling priority for games.' $true {
     $p = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games'
     Set-Reg $p 'GPU Priority' 8
     Set-Reg $p 'Priority' 6
@@ -140,63 +142,63 @@ T 'Gaming' 'MMCSS Game Priority' 'Raises GPU and CPU scheduling priority for gam
     Set-Reg $p 'SFIO Priority' 'High' 'String'
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness' 0
 }
-T 'Gaming' 'CPU Priority Separation' 'Short, variable quantums favoring the foreground app (0x26).' $true {
+T 'Gaming' 'CPU Priority Separation' '[+FPS -INPUT LAG] Short, variable quantums favoring the foreground app (0x26).' $true {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' 'Win32PrioritySeparation' 38
 }
-T 'Gaming' 'Global Timer Resolution' 'Allows high timer resolution requests to apply system-wide.' $true {
+T 'Gaming' 'Global Timer Resolution' '[-INPUT LAG +1% LOWS] Allows high timer resolution requests to apply system-wide.' $true {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel' 'GlobalTimerResolutionRequests' 1
 }
-T 'Gaming' 'Disable Dynamic Tick' 'Keeps the system timer ticking at a constant rate.' $false {
+T 'Gaming' 'Disable Dynamic Tick' '[-LATENCY] Keeps the system timer ticking at a constant rate.' $false {
     bcdedit /set disabledynamictick yes | Out-Null
 }
-T 'Gaming' 'Disable HPET Platform Clock' 'Removes forced HPET usage for a faster timer source.' $false {
+T 'Gaming' 'Disable HPET Platform Clock' '[+FPS -LATENCY] Removes forced HPET usage for a faster timer source.' $false {
     bcdedit /deletevalue useplatformclock | Out-Null
     bcdedit /set useplatformtick yes | Out-Null
 }
-T 'Gaming' 'Disable Multiplane Overlay (MPO)' 'Fixes flicker and stutter on some NVIDIA and multi-monitor setups.' $false {
+T 'Gaming' 'Disable Multiplane Overlay (MPO)' '[-STUTTER] Fixes flicker and stutter on some NVIDIA and multi-monitor setups.' $false {
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\Dwm' 'OverlayTestMode' 5
 }
-T 'Gaming' 'Disable VBS & Memory Integrity' 'Gains FPS on some CPUs but lowers system security.' $false {
+T 'Gaming' 'Disable VBS & Memory Integrity' '[+FPS -SECURITY] Gains FPS on some CPUs but lowers system security.' $false {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard' 'EnableVirtualizationBasedSecurity' 0
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled' 0
 }
-T 'Gaming' 'Disable NVIDIA Telemetry' 'Disables NVIDIA telemetry tasks, service and opt-in.' $true {
+T 'Gaming' 'Disable NVIDIA Telemetry' '[+PRIVACY -CPU USAGE] Disables NVIDIA telemetry tasks, service and opt-in.' $true {
     Get-ScheduledTask -TaskName 'NvTmRep*' | Disable-ScheduledTask | Out-Null
     Get-ScheduledTask -TaskName 'NvTmMon*' | Disable-ScheduledTask | Out-Null
     Disable-Svc @('NvTelemetryContainer')
     Set-Reg 'HKLM:\SOFTWARE\NVIDIA Corporation\NvControlPanel2\Client' 'OptInOrOutPreference' 0
 }
 
-T 'Input' 'Disable Mouse Acceleration' 'Turns off Enhance Pointer Precision for 1:1 aim.' $true {
+T 'Input' 'Disable Mouse Acceleration' '[+AIM] Turns off Enhance Pointer Precision for 1:1 aim.' $true {
     Set-Reg 'HKCU:\Control Panel\Mouse' 'MouseSpeed' '0' 'String'
     Set-Reg 'HKCU:\Control Panel\Mouse' 'MouseThreshold1' '0' 'String'
     Set-Reg 'HKCU:\Control Panel\Mouse' 'MouseThreshold2' '0' 'String'
 }
-T 'Input' 'Mouse & Keyboard Data Queue' 'Lowers input buffer sizes for faster input processing.' $false {
+T 'Input' 'Mouse & Keyboard Data Queue' '[-INPUT LAG] Lowers input buffer sizes for faster input processing.' $false {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters' 'MouseDataQueueSize' 20
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\kbdclass\Parameters' 'KeyboardDataQueueSize' 20
 }
-T 'Input' 'Fast Keyboard Repeat' 'Shortest repeat delay and fastest repeat rate.' $true {
+T 'Input' 'Fast Keyboard Repeat' '[+RESPONSE] Shortest repeat delay and fastest repeat rate.' $true {
     Set-Reg 'HKCU:\Control Panel\Keyboard' 'KeyboardDelay' '0' 'String'
     Set-Reg 'HKCU:\Control Panel\Keyboard' 'KeyboardSpeed' '31' 'String'
 }
-T 'Input' 'Disable Sticky/Filter/Toggle Keys' 'Stops accessibility pop-ups when pressing Shift repeatedly in games.' $true {
+T 'Input' 'Disable Sticky/Filter/Toggle Keys' '[NO POPUPS] Stops accessibility pop-ups when pressing Shift repeatedly in games.' $true {
     Set-Reg 'HKCU:\Control Panel\Accessibility\StickyKeys' 'Flags' '506' 'String'
     Set-Reg 'HKCU:\Control Panel\Accessibility\Keyboard Response' 'Flags' '122' 'String'
     Set-Reg 'HKCU:\Control Panel\Accessibility\ToggleKeys' 'Flags' '58' 'String'
 }
 
-T 'Network' "Disable Nagle's Algorithm" 'Sends small packets immediately for lower online latency.' $true {
+T 'Network' "Disable Nagle's Algorithm" '[-PING] Sends small packets immediately for lower online latency.' $true {
     Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces' | ForEach-Object {
         Set-Reg $_.PSPath 'TcpAckFrequency' 1
         Set-Reg $_.PSPath 'TCPNoDelay' 1
         Set-Reg $_.PSPath 'TcpDelAckTicks' 0
     }
 }
-T 'Network' 'Disable Network Throttling' 'Removes the multimedia network throttling limit.' $true {
+T 'Network' 'Disable Network Throttling' '[-PING] Removes the multimedia network throttling limit.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' 0xffffffff
 }
-T 'Network' 'Optimize TCP Stack' 'Tunes auto-tuning, RSS, heuristics and timestamps.' $true {
+T 'Network' 'Optimize TCP Stack' '[-PING +SPEED] Tunes auto-tuning, RSS, heuristics and timestamps.' $true {
     netsh int tcp set global autotuninglevel=normal | Out-Null
     netsh int tcp set global rss=enabled | Out-Null
     netsh int tcp set heuristics disabled | Out-Null
@@ -204,43 +206,43 @@ T 'Network' 'Optimize TCP Stack' 'Tunes auto-tuning, RSS, heuristics and timesta
     netsh int tcp set global initialRto=2000 | Out-Null
     netsh int tcp set global nonsackrttresiliency=disabled | Out-Null
 }
-T 'Network' 'Disable Adapter Power Saving' 'Stops network adapters from sleeping or reducing speed.' $true {
+T 'Network' 'Disable Adapter Power Saving' '[-PING -SPIKES] Stops network adapters from sleeping or reducing speed.' $true {
     Get-NetAdapter -Physical | ForEach-Object {
         Disable-NetAdapterPowerManagement -Name $_.Name -NoRestart
         Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword '*EEE' -RegistryValue 0 -NoRestart
         Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword 'EnableGreenEthernet' -RegistryValue 0 -NoRestart
     }
 }
-T 'Network' 'Disable Interrupt Moderation' 'Lower network latency at the cost of slightly more CPU usage.' $false {
+T 'Network' 'Disable Interrupt Moderation' '[-PING] Lower network latency at the cost of slightly more CPU usage.' $false {
     Get-NetAdapter -Physical | ForEach-Object {
         Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword '*InterruptModeration' -RegistryValue 0 -NoRestart
     }
 }
-T 'Network' 'Disable Large Send Offload' 'Fixes latency spikes on some network drivers.' $false {
+T 'Network' 'Disable Large Send Offload' '[-PING -SPIKES] Fixes latency spikes on some network drivers.' $false {
     Get-NetAdapter -Physical | ForEach-Object { Disable-NetAdapterLso -Name $_.Name -NoRestart }
 }
-T 'Network' 'Remove QoS Bandwidth Reserve' 'Frees the bandwidth Windows reserves for QoS.' $true {
+T 'Network' 'Remove QoS Bandwidth Reserve' '[+BANDWIDTH] Frees the bandwidth Windows reserves for QoS.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched' 'NonBestEffortLimit' 0
 }
-T 'Network' 'Disable Delivery Optimization P2P' 'Stops uploading Windows updates to other PCs.' $true {
+T 'Network' 'Disable Delivery Optimization P2P' '[+BANDWIDTH] Stops uploading Windows updates to other PCs.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' 0
 }
-T 'Network' 'Set Cloudflare DNS' 'Uses 1.1.1.1 and 1.0.0.1 on active adapters.' $false {
+T 'Network' 'Set Cloudflare DNS' '[+DNS SPEED] Uses 1.1.1.1 and 1.0.0.1 on active adapters.' $false {
     Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | ForEach-Object {
         Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses @('1.1.1.1', '1.0.0.1')
     }
 }
-T 'Network' 'Flush DNS & ARP Cache' 'Clears stale DNS and ARP entries.' $true {
+T 'Network' 'Flush DNS & ARP Cache' '[FIX] Clears stale DNS and ARP entries.' $true {
     ipconfig /flushdns | Out-Null
     netsh interface ip delete arpcache | Out-Null
 }
 
-T 'Privacy' 'Disable Telemetry' 'Sets telemetry to minimum and disables tracking services.' $true {
+T 'Privacy' 'Disable Telemetry' '[+PRIVACY -CPU USAGE] Sets telemetry to minimum and disables tracking services.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection' 'AllowTelemetry' 0
     Disable-Svc @('DiagTrack', 'dmwappushservice')
 }
-T 'Privacy' 'Disable Telemetry Tasks' 'Disables CEIP, Compatibility Appraiser and diagnostic tasks.' $true {
+T 'Privacy' 'Disable Telemetry Tasks' '[+PRIVACY -STUTTER] Disables CEIP, Compatibility Appraiser and diagnostic tasks.' $true {
     Disable-Tasks @(
         '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser',
         '\Microsoft\Windows\Application Experience\ProgramDataUpdater',
@@ -252,120 +254,120 @@ T 'Privacy' 'Disable Telemetry Tasks' 'Disables CEIP, Compatibility Appraiser an
         '\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload'
     )
 }
-T 'Privacy' 'Disable Advertising ID' 'Stops apps from using your advertising ID.' $true {
+T 'Privacy' 'Disable Advertising ID' '[+PRIVACY] Stops apps from using your advertising ID.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' 'Enabled' 0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo' 'DisabledByGroupPolicy' 1
 }
-T 'Privacy' 'Disable Activity History' 'Stops Windows from collecting and uploading activity history.' $true {
+T 'Privacy' 'Disable Activity History' '[+PRIVACY] Stops Windows from collecting and uploading activity history.' $true {
     $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
     Set-Reg $p 'EnableActivityFeed' 0
     Set-Reg $p 'PublishUserActivities' 0
     Set-Reg $p 'UploadUserActivities' 0
 }
-T 'Privacy' 'Disable Bing in Start Search' 'Start menu search only shows local results.' $true {
+T 'Privacy' 'Disable Bing in Start Search' '[+PRIVACY +UI SPEED] Start menu search only shows local results.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'BingSearchEnabled' 0
     Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
 }
-T 'Privacy' 'Disable Copilot & Recall' 'Turns off Windows Copilot and Recall snapshots.' $true {
+T 'Privacy' 'Disable Copilot & Recall' '[+PRIVACY +RAM] Turns off Windows Copilot and Recall snapshots.' $true {
     Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'AllowRecallEnablement' 0
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowCopilotButton' 0
 }
-T 'Privacy' 'Disable Error Reporting' 'Stops sending crash reports to Microsoft.' $true {
+T 'Privacy' 'Disable Error Reporting' '[+PRIVACY] Stops sending crash reports to Microsoft.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' 'Disabled' 1
     Disable-Svc @('WerSvc')
 }
-T 'Privacy' 'Disable Feedback Prompts' 'Never ask for Windows feedback.' $true {
+T 'Privacy' 'Disable Feedback Prompts' '[+PRIVACY] Never ask for Windows feedback.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Siuf\Rules' 'NumberOfSIUFInPeriod' 0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'DoNotShowFeedbackNotifications' 1
 }
-T 'Privacy' 'Disable Location Tracking' 'Turns off system-wide location services.' $false {
+T 'Privacy' 'Disable Location Tracking' '[+PRIVACY] Turns off system-wide location services.' $false {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors' 'DisableLocation' 1
     Disable-Svc @('lfsvc')
 }
 
-T 'System' 'Performance Visual Effects' 'Disables animations while keeping smooth fonts and thumbnails.' $true {
+T 'System' 'Performance Visual Effects' '[+FPS +UI SPEED] Disables animations while keeping smooth fonts and thumbnails.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 3
     Set-Reg 'HKCU:\Control Panel\Desktop' 'UserPreferencesMask' ([byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)) 'Binary'
     Set-Reg 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' 'String'
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarAnimations' 0
     Set-Reg 'HKCU:\Software\Microsoft\Windows\DWM' 'EnableAeroPeek' 0
 }
-T 'System' 'Disable Transparency' 'Turns off acrylic and blur effects.' $false {
+T 'System' 'Disable Transparency' '[+FPS +UI SPEED] Turns off acrylic and blur effects.' $false {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0
 }
-T 'System' 'Disable Background Apps' 'Stops Store apps from running in the background.' $true {
+T 'System' 'Disable Background Apps' '[+FPS +RAM] Stops Store apps from running in the background.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy' 'LetAppsRunInBackground' 2
 }
-T 'System' 'Remove Startup Delay' 'Launches startup apps immediately after login.' $true {
+T 'System' 'Remove Startup Delay' '[+BOOT] Launches startup apps immediately after login.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize' 'StartupDelayInMSec' 0
 }
-T 'System' 'Instant Menus' 'Removes the menu show delay and speeds up shutdown.' $true {
+T 'System' 'Instant Menus' '[+UI SPEED] Removes the menu show delay and speeds up shutdown.' $true {
     Set-Reg 'HKCU:\Control Panel\Desktop' 'MenuShowDelay' '0' 'String'
     Set-Reg 'HKCU:\Control Panel\Desktop' 'WaitToKillAppTimeout' '2000' 'String'
     Set-Reg 'HKCU:\Control Panel\Desktop' 'HungAppTimeout' '1000' 'String'
     Set-Reg 'HKCU:\Control Panel\Desktop' 'AutoEndTasks' '1' 'String'
 }
-T 'System' 'Disable Memory Compression' 'Less CPU overhead. Best with 16 GB RAM or more.' $false {
+T 'System' 'Disable Memory Compression' '[+FPS -CPU USAGE] Less CPU overhead. Best with 16 GB RAM or more.' $false {
     Disable-MMAgent -MemoryCompression
 }
-T 'System' 'Keep Kernel in RAM' 'Prevents drivers and kernel from being paged to disk.' $false {
+T 'System' 'Keep Kernel in RAM' '[-STUTTER] Prevents drivers and kernel from being paged to disk.' $false {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' 'DisablePagingExecutive' 1
 }
-T 'System' 'Disable SysMain (Superfetch)' 'Reduces disk activity. Recommended on SSD systems.' $false {
+T 'System' 'Disable SysMain (Superfetch)' '[-DISK USAGE] Reduces disk activity. Recommended on SSD systems.' $false {
     Disable-Svc @('SysMain')
 }
-T 'System' 'Disable Search Indexing' 'Stops background file indexing. Search gets slower.' $false {
+T 'System' 'Disable Search Indexing' '[-DISK USAGE -CPU USAGE] Stops background file indexing. Search gets slower.' $false {
     Disable-Svc @('WSearch')
 }
-T 'System' 'NTFS Optimizations' 'Disables last-access timestamps and 8.3 short names.' $true {
+T 'System' 'NTFS Optimizations' '[+DISK SPEED] Disables last-access timestamps and 8.3 short names.' $true {
     fsutil behavior set disablelastaccess 1 | Out-Null
     fsutil behavior set disable8dot3 1 | Out-Null
 }
-T 'System' 'Disable Unneeded Services' 'Fax, Remote Registry, Maps, Retail Demo, Insider and others.' $true {
+T 'System' 'Disable Unneeded Services' '[+RAM] Fax, Remote Registry, Maps, Retail Demo, Insider and others.' $true {
     Disable-Svc @('Fax', 'RemoteRegistry', 'MapsBroker', 'RetailDemo', 'WMPNetworkSvc', 'wisvc', 'WpcMonSvc')
 }
-T 'System' 'Disable Tips & Suggestions' 'Removes ads, suggested apps and silent app installs.' $true {
+T 'System' 'Disable Tips & Suggestions' '[+PRIVACY] Removes ads, suggested apps and silent app installs.' $true {
     $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
     foreach ($n in @('SystemPaneSuggestionsEnabled', 'SilentInstalledAppsEnabled', 'SoftLandingEnabled', 'SubscribedContent-338388Enabled', 'SubscribedContent-338389Enabled', 'SubscribedContent-353694Enabled', 'SubscribedContent-353696Enabled', 'PreInstalledAppsEnabled', 'OemPreInstalledAppsEnabled')) { Set-Reg $p $n 0 }
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableWindowsConsumerFeatures' 1
 }
-T 'System' 'Disable Widgets' 'Removes the Widgets board and its background process.' $true {
+T 'System' 'Disable Widgets' '[+RAM] Removes the Widgets board and its background process.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
 }
-T 'System' 'Classic Context Menu' 'Restores the full right-click menu on Windows 11.' $false {
+T 'System' 'Classic Context Menu' '[+UI SPEED] Restores the full right-click menu on Windows 11.' $false {
     reg.exe add 'HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' /f /ve | Out-Null
 }
-T 'System' 'Show File Extensions' 'Always shows file extensions in Explorer.' $true {
+T 'System' 'Show File Extensions' '[+SECURITY] Always shows file extensions in Explorer.' $true {
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'HideFileExt' 0
 }
-T 'System' 'Disable Edge Background Running' 'Stops Edge Startup Boost and background mode.' $true {
+T 'System' 'Disable Edge Background Running' '[+RAM +BOOT] Stops Edge Startup Boost and background mode.' $true {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'StartupBoostEnabled' 0
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'BackgroundModeEnabled' 0
 }
 
-T 'Cleanup' 'Clean Temp Files' 'Deletes user and system temporary files.' $true {
+T 'Cleanup' 'Clean Temp Files' '[+DISK] Deletes user and system temporary files.' $true {
     Remove-Item -Path "$env:TEMP\*", "$env:windir\Temp\*" -Recurse -Force
 }
-T 'Cleanup' 'Clear Shader Caches' 'Clears DirectX, NVIDIA and AMD shader caches.' $false {
+T 'Cleanup' 'Clear Shader Caches' '[+DISK FIX] Clears DirectX, NVIDIA and AMD shader caches.' $false {
     Remove-Item -Path "$env:LOCALAPPDATA\D3DSCache\*", "$env:LOCALAPPDATA\NVIDIA\DXCache\*", "$env:LOCALAPPDATA\NVIDIA\GLCache\*", "$env:LOCALAPPDATA\AMD\DxCache\*" -Recurse -Force
 }
-T 'Cleanup' 'Clear Windows Update Cache' 'Removes downloaded update files.' $true {
+T 'Cleanup' 'Clear Windows Update Cache' '[+DISK] Removes downloaded update files.' $true {
     Stop-Service -Name wuauserv, bits -Force
     Remove-Item -Path "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force
     Start-Service -Name wuauserv, bits
 }
-T 'Cleanup' 'Empty Recycle Bin' 'Permanently deletes everything in the Recycle Bin.' $false {
+T 'Cleanup' 'Empty Recycle Bin' '[+DISK] Permanently deletes everything in the Recycle Bin.' $false {
     Clear-RecycleBin -Force
 }
-T 'Cleanup' 'DISM Component Cleanup' 'Shrinks the WinSxS folder. Can take several minutes.' $false {
+T 'Cleanup' 'DISM Component Cleanup' '[+DISK] Shrinks the WinSxS folder. Can take several minutes.' $false {
     Dism.exe /Online /Cleanup-Image /StartComponentCleanup /NoRestart | Out-Null
 }
 
-T 'Debloat' 'Remove Bloatware Apps' 'News, Weather, Solitaire, Clipchamp, Tips, Feedback Hub and more.' $false {
+T 'Debloat' 'Remove Bloatware Apps' '[+RAM +DISK] News, Weather, Solitaire, Clipchamp, Tips, Feedback Hub and more.' $false {
     Remove-Apps @(
         'Microsoft.BingNews', 'Microsoft.BingWeather', 'Microsoft.GetHelp', 'Microsoft.Getstarted',
         'Microsoft.MicrosoftSolitaireCollection', 'Microsoft.People', 'Microsoft.WindowsFeedbackHub',
@@ -374,10 +376,10 @@ T 'Debloat' 'Remove Bloatware Apps' 'News, Weather, Solitaire, Clipchamp, Tips, 
         'MicrosoftTeams', 'MSTeams', 'Microsoft.BingSearch', 'Microsoft.MixedReality.Portal', 'Microsoft.SkypeApp'
     )
 }
-T 'Debloat' 'Remove Xbox Apps' 'Removes Xbox app and overlays. Breaks Game Pass.' $false {
+T 'Debloat' 'Remove Xbox Apps' '[+RAM] Removes Xbox app and overlays. Breaks Game Pass.' $false {
     Remove-Apps @('Microsoft.XboxApp', 'Microsoft.GamingApp', 'Microsoft.XboxGamingOverlay', 'Microsoft.XboxGameOverlay', 'Microsoft.XboxSpeechToTextOverlay')
 }
-T 'Debloat' 'Uninstall OneDrive' 'Removes OneDrive. Synced files stay on your PC.' $false {
+T 'Debloat' 'Uninstall OneDrive' '[+RAM +BOOT] Removes OneDrive. Synced files stay on your PC.' $false {
     Stop-Process -Name OneDrive -Force
     $setup = "$env:SystemRoot\System32\OneDriveSetup.exe"
     if (-not (Test-Path $setup)) { $setup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe" }
@@ -410,7 +412,7 @@ function Out-Line {
 }
 
 function Show-Banner {
-    $in = 64
+    $in = 74
     $title = ' C O D E O P T '
     $sub = 'Windows Tweaks & Optimizer ' + $G.Dot + ' v2.0'
     $gap = $in - $title.Length - $sub.Length - 2
@@ -420,7 +422,7 @@ function Show-Banner {
     Out-Line @((S '   OS ' 'DarkCyan'), (S $os 'White'), (S '   CPU ' 'DarkCyan'), (S $cpu 'White'), (S '   RAM ' 'DarkCyan'), (S "$ram GB" 'White'))
 }
 
-function Show-Rule { Out-Line @((S ('  ' + ($G.L * 66)) 'DarkBlue')) }
+function Show-Rule { Out-Line @((S ('  ' + ($G.L * 76)) 'DarkBlue')) }
 
 function Draw {
     param($Items, $Rows)
@@ -449,11 +451,12 @@ function Draw {
             $box = if ($t.Sel) { '[' + $G.On + ']' } else { '[ ]' }
             $bf = if ($t.Sel) { 'Cyan' } else { 'DarkGray' }
             $rec = if ($t.Rec) { ' REC' } else { '' }
+            $tf = if ($t.Fps) { 'Cyan' } elseif ($t.Tags -match 'SECURITY|SAFE') { 'Blue' } else { 'DarkCyan' }
             if ($cur) {
-                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + $t.Name.PadRight(42)) 'White' 'DarkBlue'), (S $rec 'DarkCyan'))
+                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + $t.Name.PadRight(40)) 'White' 'DarkBlue'), (S ' '), (S $t.Tags.PadRight(24) $tf), (S $rec 'DarkCyan'))
             } else {
                 $nf = if ($t.Sel) { 'White' } else { 'Gray' }
-                Out-Line @((S '    '), (S $box $bf), (S (' ' + $t.Name.PadRight(42)) $nf), (S $rec 'DarkBlue'))
+                Out-Line @((S '    '), (S $box $bf), (S (' ' + $t.Name.PadRight(40)) $nf), (S ' '), (S $t.Tags.PadRight(24) $tf), (S $rec 'DarkBlue'))
             }
         } else {
             Out-Line @((S ''))
@@ -462,10 +465,14 @@ function Draw {
     $less = ($script:top + $Rows) -lt $Items.Count
     Out-Line @((S $(if ($less) { "    $($G.TriD) more" } else { '' }) 'DarkBlue'))
     Show-Rule
-    $desc = if ($Items.Count) { $Items[$script:i].Desc } else { '' }
-    Out-Line @((S ('  ' + [string][char]0x00BB + ' ') 'Cyan'), (S $desc 'Gray'))
+    $cur = if ($Items.Count) { $Items[$script:i] } else { $null }
+    $desc = if ($cur) { $cur.Desc } else { '' }
+    $dt = if ($cur -and $cur.Tags) { '[' + $cur.Tags + '] ' } else { '' }
+    $df = if ($cur -and $cur.Fps) { 'Cyan' } else { 'DarkCyan' }
+    Out-Line @((S ('  ' + [string][char]0x00BB + ' ') 'Cyan'), (S $dt $df), (S $desc 'Gray'))
     $sel = @($Tweaks | Where-Object Sel).Count
-    Out-Line @((S '  Selected ' 'DarkCyan'), (S "$sel" 'White'), (S " of $($Tweaks.Count)" 'DarkCyan'), (S "   Category $($script:c + 1)/$($Cats.Count)" 'DarkCyan'))
+    $fps = @($Tweaks | Where-Object { $_.Sel -and $_.Fps }).Count
+    Out-Line @((S '  Selected ' 'DarkCyan'), (S "$sel" 'White'), (S " of $($Tweaks.Count)" 'DarkCyan'), (S '   FPS boosters ' 'DarkCyan'), (S "$fps" 'Cyan'), (S "   Category $($script:c + 1)/$($Cats.Count)" 'DarkCyan'))
     Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S 'move  ' 'DarkGray'), (S "$($G.Lf)$($G.Rt) " 'Cyan'), (S 'tab  ' 'DarkGray'), (S 'Space ' 'Cyan'), (S 'toggle  ' 'DarkGray'), (S 'A ' 'Cyan'), (S 'all  ' 'DarkGray'), (S 'R ' 'Cyan'), (S 'recommended  ' 'DarkGray'), (S 'C ' 'Cyan'), (S 'clear  ' 'DarkGray'), (S 'Enter ' 'Cyan'), (S 'apply  ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'exit' 'DarkGray'))
 }
 
@@ -486,7 +493,8 @@ function Invoke-Apply {
     foreach ($t in $list) {
         $k++
         Write-Host ('  ' + ("[$k/$n]").PadRight(8)) -ForegroundColor DarkCyan -NoNewline
-        Write-Host $t.Name.PadRight(44) -ForegroundColor White -NoNewline
+        Write-Host $t.Name.PadRight(40) -ForegroundColor White -NoNewline
+        Write-Host $t.Tags.PadRight(24) -ForegroundColor $(if ($t.Fps) { 'Cyan' } else { 'DarkCyan' }) -NoNewline
         try {
             & $t.Do *> $null
             Write-Host " $($G.Ok) done" -ForegroundColor Cyan
@@ -510,7 +518,7 @@ function Invoke-Apply {
     Clear-Host
 }
 
-$Host.UI.RawUI.WindowTitle = 'CodeOpt'
+$Host.UI.RawUI.WindowTitle = 'CodeOpt Optimizer'
 $Host.UI.RawUI.BackgroundColor = 'Black'
 [Console]::CursorVisible = $false
 Clear-Host
