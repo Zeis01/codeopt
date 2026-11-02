@@ -62,7 +62,7 @@ function T {
     param([string]$Cat, [string]$Name, [string]$Desc, [bool]$Rec, [scriptblock]$Do)
     $Tags = ''
     if ($Desc -match '^\[(.+?)\]\s*(.*)$') { $Tags = $Matches[1]; $Desc = $Matches[2] }
-    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Tags = $Tags; Fps = ($Tags -match '\+FPS'); Rec = $Rec; Do = $Do; Sel = $false })
+    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Tags = $Tags; Fps = ($Tags -match '\+FPS'); Rec = $Rec; Do = $Do; Sel = $false; GMin = 0; GMax = 0; GWhy = '' })
 }
 
 T 'Safety' 'Create System Restore Point' '[SAFE] Creates a restore point so every change can be rolled back from System Restore.' $true {
@@ -390,9 +390,153 @@ T 'Debloat' 'Uninstall OneDrive' '[+RAM +BOOT] Removes OneDrive. Synced files st
 $Cats = @('Safety', 'Power', 'Gaming', 'Input', 'Network', 'Privacy', 'System', 'Cleanup', 'Debloat')
 
 $os = ((Get-CimInstance Win32_OperatingSystem).Caption -replace 'Microsoft ', '')
-$cpu = ((Get-CimInstance Win32_Processor | Select-Object -First 1).Name -replace '\s+', ' ').Trim()
-if ($cpu.Length -gt 38) { $cpu = $cpu.Substring(0, 38) }
-$ram = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+
+function Get-GpuScore {
+    param([string]$N, [double]$V)
+    $s = 0
+    $t = @(
+        @(10, 'RTX 5090|RTX 5080|RTX 4090'),
+        @(9, 'RTX 4080|RTX 5070 Ti|RX 7900|RX 9070'),
+        @(8, 'RTX 5070|RTX 4070|RTX 3090|RTX 3080|RX 7800|RX 69\d0|RX 6800|Arc B7'),
+        @(7, 'RTX 5060|RTX 4060|RTX 3070|RTX 2080|RX 7700|RX 7600|RX 67\d0|RX 9060|Arc A7|Arc B5'),
+        @(6, 'RTX 3060|RTX 2070|RTX 2060|GTX 1080|RX 66\d0|RX 6600|RX 5700|Arc A5'),
+        @(5, 'RTX 3050|RTX 2050|GTX 1660|GTX 1070|RX 5600|RX 5500|RX 590|RX 580'),
+        @(4, 'GTX 1650|GTX 1060|GTX 980|GTX 970|RX 570|RX 6500|Arc A3|8[89]0M'),
+        @(3, 'GTX 1050|GTX 960|RX 560|RX 6400|RX 550|7[6-8]0M|Arc\(TM\) Graphics|Arc Graphics'),
+        @(2, 'Iris|Vega|Radeon\(TM\) Graphics|Radeon Graphics|MX\d{3}'),
+        @(1, 'UHD|HD Graphics')
+    )
+    foreach ($r in $t) { if ($N -match $r[1]) { $s = $r[0]; break } }
+    if (-not $s) { $s = if ($V -ge 12GB) { 7 } elseif ($V -ge 8GB) { 5 } elseif ($V -ge 4GB) { 3 } else { 2 } }
+    if ($N -match 'Laptop|Mobile|Max-Q') { $s = [math]::Max(1, $s - 1) }
+    $s
+}
+
+function Get-HW {
+    $h = @{}
+    $p = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $n = ([string]$p.Name -replace '\((R|TM)\)', '' -replace '\s+\d+-Core', '' -replace '\s+(CPU|Processor)\b', '' -replace '\s*@.*$', '' -replace '\s+', ' ').Trim()
+    $h.Cpu = if ($n.Length -gt 32) { $n.Substring(0, 32) } else { $n }
+    $h.Cores = [int]$p.NumberOfCores
+    $h.Threads = [int]$p.NumberOfLogicalProcessors
+    $h.Clock = [int]$p.MaxClockSpeed
+    if ($h.Threads -lt 1) { $h.Threads = 4 }
+    if ($h.Clock -lt 1) { $h.Clock = 3000 }
+    $cs = [math]::Min(6, $h.Threads * 0.3) + [math]::Min(4, $h.Clock / 1000)
+    if ($n -match 'X3D') { $cs += 2 }
+    if ($n -match 'Ryzen \d+ (7|8|9)\d{3}|Core Ultra|i\d-1[2-5]\d{3}|Ryzen AI') { $cs += 1 }
+    if ($n -match 'i\d-[2-7]\d{3}\b|FX-|Athlon|Celeron|Pentium|Ryzen \d (1|2)\d{3}') { $cs -= 1.5 }
+    $h.CpuScore = [math]::Round([math]::Max(1, [math]::Min(10, $cs)), 1)
+
+    $vr = @{}
+    Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' | ForEach-Object {
+        $q = $_.'HardwareInformation.qwMemorySize'
+        if ($null -eq $q) { $q = $_.'HardwareInformation.MemorySize' }
+        if ($q -is [byte[]]) { $q = [BitConverter]::ToUInt64([byte[]](($q + [byte[]]::new(8))[0..7]), 0) }
+        if ($_.DriverDesc -and $q) { $vr[[string]$_.DriverDesc] = [double]$q }
+    }
+    $gs = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch 'Basic Display|Remote|Virtual|Parsec|Mirage|DisplayLink|Meta' })
+    $best = $null; $bs = -1; $h.Vram = 0
+    foreach ($g in $gs) {
+        $v = if ($vr[[string]$g.Name]) { $vr[[string]$g.Name] } else { [double]([int64]$g.AdapterRAM -band 0xFFFFFFFF) }
+        $s = Get-GpuScore $g.Name $v
+        if ($s -gt $bs) { $bs = $s; $best = $g; $h.Vram = [math]::Round($v / 1GB) }
+    }
+    $gn = if ($best) { ([string]$best.Name -replace '\((R|TM)\)', '' -replace '\s+', ' ').Trim() } else { 'Unknown GPU' }
+    $h.Gpu = if ($gn.Length -gt 30) { $gn.Substring(0, 30) } else { $gn }
+    $h.GpuScore = [math]::Max(1, $bs)
+    $h.GpuVendor = if ($gn -match 'NVIDIA|GeForce|RTX|GTX') { 'NVIDIA' } elseif ($gn -match 'AMD|Radeon') { 'AMD' } elseif ($gn -match 'Intel|Arc') { 'Intel' } else { 'Other' }
+    $h.IGpu = ($gn -match 'UHD|Iris|HD Graphics|Arc(\(TM\))? Graphics|Radeon(\(TM\))? (\d{3}M )?Graphics|Vega \d+') -or ($h.Vram -lt 1)
+    $h.HagsOk = (-not $h.IGpu) -and ($gn -match 'RTX|GTX 1[06]\d0|GTX 16|RX [5-9]\d{3}|Arc (A|B)\d')
+    $h.Hz = [int](@(Get-CimInstance Win32_VideoController) | Measure-Object -Property CurrentRefreshRate -Maximum).Maximum
+
+    $h.RamGB = [int][math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+    $m = @(Get-CimInstance Win32_PhysicalMemory)
+    $h.Sticks = $m.Count
+    $h.RamMHz = [int]($m | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum
+
+    $h.Disk = 'Unknown'
+    $dn = (Get-Partition -DriveLetter $env:SystemDrive[0] | Get-Disk).Number
+    $pd = Get-PhysicalDisk | Where-Object { [string]$_.DeviceId -eq [string]$dn } | Select-Object -First 1
+    if ($pd) { $h.Disk = if ([string]$pd.BusType -eq 'NVMe') { 'NVMe' } elseif ([string]$pd.MediaType -eq 'HDD') { 'HDD' } elseif ([string]$pd.MediaType -eq 'SSD') { 'SSD' } else { [string]$pd.MediaType } }
+
+    $ch = @((Get-CimInstance Win32_SystemEnclosure).ChassisTypes)
+    $h.Laptop = [bool](Get-CimInstance Win32_Battery) -or (@($ch | Where-Object { $_ -in 8, 9, 10, 14, 30, 31, 32 }).Count -gt 0)
+    $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard
+    $h.Vbs = ($dg.VirtualizationBasedSecurityStatus -eq 2)
+    $h.Dvr = ((Get-ItemProperty 'HKCU:\System\GameConfigStore').GameDVR_Enabled -ne 0)
+
+    $cf = 90 + $h.CpuScore * 45
+    $gf = 40 + $h.GpuScore * 50
+    $b = [math]::Min($cf, $gf)
+    if ($h.RamGB -le 8) { $b *= 0.85 }
+    if ($h.Sticks -eq 1) { $b *= 0.9 }
+    if ($h.Laptop) { $b *= 0.9 }
+    $h.Bound = if ($cf -lt $gf) { 'CPU' } else { 'GPU' }
+    $h.BaseFps = [int]([math]::Round($b / 5) * 5)
+    $h
+}
+
+$HW = Get-HW
+$script:Base = $HW.BaseFps
+$script:BaseSrc = 'est'
+
+function Gn { param($a, $b, $r) $a, $b, $r }
+
+$Gain = @{
+    'Ultimate Performance Plan' = { if ($HW.Laptop) { Gn 3 8 'laptop power limits relaxed' } elseif ($HW.CpuScore -lt 6) { Gn 2 5 'CPU clocks held higher' } else { Gn 1 3 'clocks stay boosted' } }
+    'Disable Core Parking' = { if ($HW.Threads -le 8) { Gn 2 5 "only $($HW.Threads) threads, parking hurts more" } else { Gn 1 3 'fewer core wake-ups' } }
+    'Disable PCIe Link State Power Saving' = { if ($HW.IGpu) { Gn 0 0 'integrated GPU, no PCIe link to tune' } elseif ($HW.Laptop) { Gn 1 3 'laptop link power saving is aggressive' } else { Gn 0 2 'GPU link stays at full speed' } }
+    'Disable Power Throttling' = { if ($HW.Laptop) { Gn 2 5 'laptops throttle background threads hard' } else { Gn 0 2 'small effect on desktops' } }
+    'Enable Game Mode' = { if ($HW.Threads -le 6 -or $HW.RamGB -le 8) { Gn 2 5 'limited CPU/RAM gains from prioritizing' } else { Gn 0 2 'mostly helps 1% lows' } }
+    'Disable Game Bar & Game DVR' = { if (-not $HW.Dvr) { Gn 0 1 'Game DVR is already off' } elseif ($HW.GpuScore -le 4) { Gn 3 8 'background capture costs a weaker GPU more' } else { Gn 2 5 'stops background capture' } }
+    'Disable Fullscreen Optimizations' = { Gn 0 3 'exclusive fullscreen games only' }
+    'Optimizations for Windowed Games' = { Gn 1 4 'borderless and windowed games' }
+    'Hardware-Accelerated GPU Scheduling' = { if (-not $HW.HagsOk) { Gn 0 0 'GPU does not support HAGS' } elseif ($HW.Bound -eq 'CPU') { Gn 2 5 'CPU-bound, offloads scheduling to GPU' } else { Gn 0 2 'GPU-bound, small gain' } }
+    'MMCSS Game Priority' = { Gn 0 2 'mainly smoother frametimes' }
+    'CPU Priority Separation' = { if ($HW.Bound -eq 'CPU') { Gn 1 3 'CPU-bound, game gets longer time slices' } else { Gn 0 1 'GPU-bound, small gain' } }
+    'Global Timer Resolution' = { Gn 0 1 'improves 1% lows more than average FPS' }
+    'Disable HPET Platform Clock' = { Gn 0 3 'only helps if HPET was forced on' }
+    'Disable Multiplane Overlay (MPO)' = { Gn 0 1 'fixes stutter, little FPS change' }
+    'Disable VBS & Memory Integrity' = { if (-not $HW.Vbs) { Gn 0 0 'VBS is already off on this PC' } elseif ($HW.Bound -eq 'CPU') { Gn 5 15 'VBS is on and you are CPU-bound' } else { Gn 3 8 'VBS is on' } }
+    'Disable NVIDIA Telemetry' = { if ($HW.GpuVendor -eq 'NVIDIA') { Gn 0 1 'less background CPU' } else { Gn 0 0 'no NVIDIA GPU detected' } }
+    'Disable Telemetry' = { if ($HW.CpuScore -lt 5) { Gn 1 2 'frees a weaker CPU' } else { Gn 0 1 'less background CPU' } }
+    'Disable Telemetry Tasks' = { Gn 0 1 'prevents random background spikes' }
+    'Disable Copilot & Recall' = { if ($HW.RamGB -le 16) { Gn 0 2 'frees RAM' } else { Gn 0 1 'frees RAM' } }
+    'Performance Visual Effects' = { if ($HW.IGpu) { Gn 2 5 'iGPU shares load with desktop effects' } else { Gn 0 2 'lighter desktop compositor work' } }
+    'Disable Transparency' = { if ($HW.IGpu) { Gn 1 3 'iGPU skips blur work' } else { Gn 0 1 'small on a dedicated GPU' } }
+    'Disable Background Apps' = { if ($HW.RamGB -le 8) { Gn 2 6 "only $($HW.RamGB) GB RAM" } else { Gn 0 2 'fewer background processes' } }
+    'Disable Memory Compression' = { if ($HW.RamGB -le 8) { Gn -4 0 'low RAM: compression helps, keep it on' } elseif ($HW.RamGB -ge 16) { Gn 0 2 'enough RAM, less CPU overhead' } else { Gn -1 1 'borderline RAM amount' } }
+    'Disable SysMain (Superfetch)' = { if ($HW.Disk -eq 'HDD') { Gn -2 0 'HDD loads benefit from SysMain' } else { Gn 0 1 'less background disk work' } }
+    'Disable Search Indexing' = { if ($HW.Disk -eq 'HDD') { Gn 1 3 'indexing keeps the HDD busy' } else { Gn 0 1 'less background I/O' } }
+    'Disable Unneeded Services' = { Gn 0 1 'frees RAM' }
+    'Disable Widgets' = { if ($HW.RamGB -le 8) { Gn 1 2 'frees RAM' } else { Gn 0 1 'frees RAM' } }
+    'Disable Edge Background Running' = { if ($HW.RamGB -le 8) { Gn 1 2 'frees RAM' } else { Gn 0 1 'frees RAM' } }
+    'Remove Bloatware Apps' = { if ($HW.RamGB -le 8) { Gn 1 3 'fewer background apps' } else { Gn 0 1 'fewer background apps' } }
+}
+
+foreach ($t in $Tweaks) {
+    if ($Gain.ContainsKey($t.Name)) {
+        $r = @(& $Gain[$t.Name])
+        $t.GMin = [double]$r[0]; $t.GMax = [double]$r[1]; $t.GWhy = [string]$r[2]
+    }
+}
+
+function Get-FpsText {
+    param([double]$Lo, [double]$Hi)
+    $a = [int][math]::Round($script:Base * $Lo / 100)
+    $b = [int][math]::Round($script:Base * $Hi / 100)
+    if ($a -eq 0 -and $b -eq 0) { return '' }
+    if ($a -eq $b) { return ('{0:+0;-0} FPS' -f $a) }
+    if ($a -lt 0) { return ('{0} to {1:+0;-0;0} FPS' -f $a, $b) }
+    '+{0}-{1} FPS' -f $a, $b
+}
+
+function Get-Total {
+    $lo = 1.0; $hi = 1.0
+    foreach ($t in $Tweaks) { if ($t.Sel) { $lo *= (1 + $t.GMin / 100); $hi *= (1 + $t.GMax / 100) } }
+    @((($lo - 1) * 80), (($hi - 1) * 80))
+}
 
 function S { param($t, $f = 'Gray', $b = $null) @{ t = [string]$t; f = $f; b = $b } }
 
@@ -412,17 +556,24 @@ function Out-Line {
 }
 
 function Show-Banner {
-    $in = 74
+    $in = 82
     $title = ' C O D E O P T '
     $sub = 'Windows Tweaks & Optimizer ' + $G.Dot + ' v2.0'
     $gap = $in - $title.Length - $sub.Length - 2
     Out-Line @((S ('  ' + $G.TL + ($G.H * $in) + $G.TR) 'Blue'))
     Out-Line @((S ('  ' + $G.V + ' ') 'Blue'), (S $title 'White' 'DarkBlue'), (S (' ' * $gap)), (S $sub 'Cyan'), (S ' '), (S $G.V 'Blue'))
     Out-Line @((S ('  ' + $G.BL + ($G.H * $in) + $G.BR) 'Blue'))
-    Out-Line @((S '   OS ' 'DarkCyan'), (S $os 'White'), (S '   CPU ' 'DarkCyan'), (S $cpu 'White'), (S '   RAM ' 'DarkCyan'), (S "$ram GB" 'White'))
+    $dev = if ($HW.Laptop) { 'Laptop' } else { 'Desktop' }
+    $hz = if ($HW.Hz -gt 0) { "$($HW.Hz) Hz" } else { '?' }
+    $mhz = if ($HW.RamMHz -gt 0) { " $($HW.RamMHz) MHz" } else { '' }
+    $vbs = if ($HW.Vbs) { 'On' } else { 'Off' }
+    $bl = if ($script:BaseSrc -eq 'est') { "~$($script:Base) FPS est." } else { "$($script:Base) FPS (yours)" }
+    Out-Line @((S '   CPU ' 'DarkCyan'), (S "$($HW.Cpu) $($HW.Cores)C/$($HW.Threads)T" 'White'), (S '   GPU ' 'DarkCyan'), (S "$($HW.Gpu) $($HW.Vram) GB" 'White'))
+    Out-Line @((S '   RAM ' 'DarkCyan'), (S "$($HW.RamGB) GB$mhz x$($HW.Sticks)" 'White'), (S '   DISK ' 'DarkCyan'), (S $HW.Disk 'White'), (S '   DISPLAY ' 'DarkCyan'), (S $hz 'White'), (S '   DEVICE ' 'DarkCyan'), (S $dev 'White'), (S '   VBS ' 'DarkCyan'), (S $vbs 'White'))
+    Out-Line @((S '   OS ' 'DarkCyan'), (S $os 'White'), (S '   BOTTLENECK ' 'DarkCyan'), (S $HW.Bound 'Cyan'), (S '   BASE ' 'DarkCyan'), (S $bl 'Cyan'))
 }
 
-function Show-Rule { Out-Line @((S ('  ' + ($G.L * 76)) 'DarkBlue')) }
+function Show-Rule { Out-Line @((S ('  ' + ($G.L * 84)) 'DarkBlue')) }
 
 function Draw {
     param($Items, $Rows)
@@ -452,11 +603,13 @@ function Draw {
             $bf = if ($t.Sel) { 'Cyan' } else { 'DarkGray' }
             $rec = if ($t.Rec) { ' REC' } else { '' }
             $tf = if ($t.Fps) { 'Cyan' } elseif ($t.Tags -match 'SECURITY|SAFE') { 'Blue' } else { 'DarkCyan' }
+            $est = Get-FpsText $t.GMin $t.GMax
+            $ef = if ($t.GMin -lt 0) { 'DarkYellow' } else { 'Cyan' }
             if ($cur) {
-                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + $t.Name.PadRight(40)) 'White' 'DarkBlue'), (S ' '), (S $t.Tags.PadRight(24) $tf), (S $rec 'DarkCyan'))
+                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + $t.Name.PadRight(38)) 'White' 'DarkBlue'), (S ' '), (S $t.Tags.PadRight(23) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkCyan'))
             } else {
                 $nf = if ($t.Sel) { 'White' } else { 'Gray' }
-                Out-Line @((S '    '), (S $box $bf), (S (' ' + $t.Name.PadRight(40)) $nf), (S ' '), (S $t.Tags.PadRight(24) $tf), (S $rec 'DarkBlue'))
+                Out-Line @((S '    '), (S $box $bf), (S (' ' + $t.Name.PadRight(38)) $nf), (S ' '), (S $t.Tags.PadRight(23) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkBlue'))
             }
         } else {
             Out-Line @((S ''))
@@ -470,10 +623,21 @@ function Draw {
     $dt = if ($cur -and $cur.Tags) { '[' + $cur.Tags + '] ' } else { '' }
     $df = if ($cur -and $cur.Fps) { 'Cyan' } else { 'DarkCyan' }
     Out-Line @((S ('  ' + [string][char]0x00BB + ' ') 'Cyan'), (S $dt $df), (S $desc 'Gray'))
+    if ($cur -and ($cur.GMin -ne 0 -or $cur.GMax -ne 0)) {
+        $ec = if ($cur.GMin -lt 0) { 'DarkYellow' } else { 'Cyan' }
+        Out-Line @((S '    Est. ' 'DarkCyan'), (S (Get-FpsText $cur.GMin $cur.GMax) $ec), (S ('  ({0:+0;-0;0}% to {1:+0;-0;0}%)  ' -f $cur.GMin, $cur.GMax) 'DarkCyan'), (S $cur.GWhy 'Gray'))
+    } elseif ($cur -and $cur.GWhy) {
+        Out-Line @((S '    Est. ' 'DarkCyan'), (S 'no FPS change  ' 'DarkGray'), (S $cur.GWhy 'Gray'))
+    } else {
+        Out-Line @((S '    Est. ' 'DarkCyan'), (S 'no direct FPS impact' 'DarkGray'))
+    }
     $sel = @($Tweaks | Where-Object Sel).Count
-    $fps = @($Tweaks | Where-Object { $_.Sel -and $_.Fps }).Count
-    Out-Line @((S '  Selected ' 'DarkCyan'), (S "$sel" 'White'), (S " of $($Tweaks.Count)" 'DarkCyan'), (S '   FPS boosters ' 'DarkCyan'), (S "$fps" 'Cyan'), (S "   Category $($script:c + 1)/$($Cats.Count)" 'DarkCyan'))
-    Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S 'move  ' 'DarkGray'), (S "$($G.Lf)$($G.Rt) " 'Cyan'), (S 'tab  ' 'DarkGray'), (S 'Space ' 'Cyan'), (S 'toggle  ' 'DarkGray'), (S 'A ' 'Cyan'), (S 'all  ' 'DarkGray'), (S 'R ' 'Cyan'), (S 'recommended  ' 'DarkGray'), (S 'C ' 'Cyan'), (S 'clear  ' 'DarkGray'), (S 'Enter ' 'Cyan'), (S 'apply  ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'exit' 'DarkGray'))
+    $tt = Get-Total
+    $tg = Get-FpsText $tt[0] $tt[1]
+    if (-not $tg) { $tg = '+0 FPS' }
+    $tp = '  ({0:+0;-0;0}% to {1:+0;-0;0}%)' -f $tt[0], $tt[1]
+    Out-Line @((S '  Selected ' 'DarkCyan'), (S "$sel" 'White'), (S " of $($Tweaks.Count)" 'DarkCyan'), (S '   Est. total gain ' 'DarkCyan'), (S $tg 'Cyan'), (S $tp 'DarkCyan'), (S "   Category $($script:c + 1)/$($Cats.Count)" 'DarkCyan'))
+    Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S 'move  ' 'DarkGray'), (S "$($G.Lf)$($G.Rt) " 'Cyan'), (S 'tab  ' 'DarkGray'), (S 'Space ' 'Cyan'), (S 'toggle  ' 'DarkGray'), (S 'A ' 'Cyan'), (S 'all  ' 'DarkGray'), (S 'R ' 'Cyan'), (S 'recommended  ' 'DarkGray'), (S 'C ' 'Cyan'), (S 'clear  ' 'DarkGray'), (S 'F ' 'Cyan'), (S 'my FPS  ' 'DarkGray'), (S 'Enter ' 'Cyan'), (S 'apply  ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'exit' 'DarkGray'))
 }
 
 function Invoke-Apply {
@@ -483,6 +647,10 @@ function Invoke-Apply {
     Show-Banner
     Out-Line @((S ''))
     Out-Line @((S '  Ready to apply ' 'Gray'), (S "$($list.Count)" 'White'), (S ' tweaks.  ' 'Gray'), (S 'Enter ' 'Cyan'), (S 'confirm   ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'cancel' 'DarkGray'))
+    $tt = Get-Total
+    $tg = Get-FpsText $tt[0] $tt[1]
+    if (-not $tg) { $tg = '+0 FPS' }
+    Out-Line @((S '  Estimated gain ' 'DarkCyan'), (S $tg 'Cyan'), (S ('  ({0:+0;-0;0}% to {1:+0;-0;0}%) from a base of {2} FPS' -f $tt[0], $tt[1], $script:Base) 'DarkCyan'))
     while ($true) {
         $k = [Console]::ReadKey($true).Key
         if ($k -eq 'Escape') { Clear-Host; return }
@@ -512,6 +680,9 @@ function Invoke-Apply {
     Write-Host ($G.Shade * ($barW - $fill)) -ForegroundColor DarkBlue -NoNewline
     Write-Host "  $ok/$n" -ForegroundColor White
     Write-Host ''
+    Write-Host '  Estimated gain: ' -ForegroundColor DarkCyan -NoNewline
+    Write-Host $tg -ForegroundColor Cyan -NoNewline
+    Write-Host '  (real results depend on the game, settings and drivers)' -ForegroundColor DarkGray
     Write-Host '  Restart your PC to apply all changes.' -ForegroundColor Cyan
     Write-Host '  Press any key to return to the menu...' -ForegroundColor DarkGray
     [void][Console]::ReadKey($true)
@@ -534,7 +705,7 @@ while ($run) {
         Clear-Host
     }
     $items = @($Tweaks | Where-Object { $_.Cat -eq $Cats[$script:c] })
-    $rows = [Math]::Max(4, [Console]::WindowHeight - 17)
+    $rows = [Math]::Max(4, [Console]::WindowHeight - 21)
     if ($script:i -ge $items.Count) { $script:i = [Math]::Max(0, $items.Count - 1) }
     if ($script:i -lt $script:top) { $script:top = $script:i }
     if ($script:i -ge $script:top + $rows) { $script:top = $script:i - $rows + 1 }
@@ -555,6 +726,19 @@ while ($run) {
         }
         'R' { foreach ($t in $Tweaks) { $t.Sel = $t.Rec } }
         'C' { foreach ($t in $Tweaks) { $t.Sel = $false } }
+        'F' {
+            [Console]::CursorVisible = $true
+            Clear-Host
+            Show-Banner
+            Out-Line @((S ''))
+            Out-Line @((S '  Type the FPS you get now in your game for exact numbers. Leave empty for the hardware estimate.' 'Gray'))
+            Write-Host '  Your FPS: ' -ForegroundColor Cyan -NoNewline
+            $v = Read-Host
+            if ($v -match '^\d+$' -and [int]$v -gt 0) { $script:Base = [int]$v; $script:BaseSrc = 'user' }
+            else { $script:Base = $HW.BaseFps; $script:BaseSrc = 'est' }
+            [Console]::CursorVisible = $false
+            $lastW = 0
+        }
         'Enter' { Invoke-Apply; $lastW = 0 }
         'Escape' { $run = $false }
         'Q' { $run = $false }
