@@ -52,12 +52,13 @@ You don't need to start PowerShell as Administrator. codeopt asks for elevation 
 | Option | Description |
 |---|---|
 | `--template <file.toml>` | Load a template. Also accepted: `--template=<file>`, `-t <file>`, or just the file path as the only argument |
+| `--lang <en\|pl>` | Interface language: `en` (English) or `pl` (Polish). Also accepted: `--lang=pl` |
 | `--apply` | Apply the template right away instead of opening the menu. Needs `--template` |
 | `--yes` | Skip the confirmation screen and every "press any key" pause. Use it with `--apply` for unattended runs |
 | `--list` | Print every tweak ID with its category, restart requirement and whether it's recommended. Doesn't need admin rights |
 | `--help` | Show the help text |
 
-`--apply` and `--yes` override `auto_apply` and `confirm` in the file.
+`--apply`, `--yes` and `--lang` override `auto_apply`, `confirm` and `language` in the file.
 
 ---
 
@@ -132,6 +133,7 @@ You can add any other keys here and they're ignored.
 | `auto_apply` | bool | `false` | `true` skips the menu and applies right away (same as `--apply`) |
 | `confirm` | bool | `true` | `false` skips the confirmation screen and pauses (same as `--yes`) |
 | `base_fps` | integer | hardware estimate | Your real in-game FPS. Every FPS estimate is calculated from it (same as pressing **F** in the menu) |
+| `language` | string | see section 5.1 | Interface language: `"en"` or `"pl"`. Template warnings are shown in this language too |
 
 ### Presets
 
@@ -142,6 +144,19 @@ You can add any other keys here and they're ignored.
 | `fps` | Restore point plus every `+FPS` tweak whose estimated gain **on this PC** is above zero and that doesn't lower security. The result changes with the hardware: for example, *Disable VBS* is never included, and *Disable Memory Compression* is skipped on 8 GB machines |
 | `privacy` | Restore point plus the whole **Privacy** tab |
 | `all` | Every tweak. Use carefully: it includes OneDrive removal, Xbox app removal and disabling VBS |
+
+### 5.1 Language
+
+codeopt is available in **English** and **Polish**. Tweak names, descriptions, tags, FPS reasons, DNS notes, warnings and the `--help` text are all translated. It picks the language in this order:
+
+1. `--lang` on the command line
+2. `language` in the template's `[settings]`
+3. The language you last chose with **L** in the menu (saved in `HKCU\Software\codeopt`)
+4. The Windows display language: Polish Windows starts in Polish, everything else in English
+
+Press **L** in the menu at any time to switch between PL and EN. The banner shows the current language, for example `v2.1 • PL`.
+
+> **Template files are always written in English**, whatever the interface language. Section names, keys, tweak IDs, category names (`gaming`, `network`, ...), presets and DNS provider IDs never change, so one template works in both languages. Only the values of `name`, `author` and `description` are free text.
 
 ### How restarts work
 
@@ -373,6 +388,7 @@ author = "codeopt"
 preset        = "fps"
 restore_point = true
 restart       = "ask"
+language      = "pl"         # Polish interface
 
 [categories]
 input = true
@@ -439,6 +455,7 @@ codeopt never stops on a template mistake. It skips the bad part, keeps everythi
 | Warning | Fix |
 |---|---|
 | `File not found: ...` | Check the path. Put it in quotes if it contains spaces |
+| `settings.language must be en or pl` | Use `"en"` or `"pl"` |
 | `Line N: cannot read '...'` | That line isn't `key = value` or `[section]`. Often a missing `=` or quote |
 | `Invalid value: ...` | Unquoted text. Strings need quotes: `"fps"`, not `fps` |
 | `Unknown section [x]` / `Unknown key settings.x` | Typo in a section or key name |
@@ -458,6 +475,7 @@ With `--yes` or `confirm = false`, the warnings screen doesn't wait for a key, b
 - Use `preset = "fps"` instead of listing gaming tweaks by hand. It adapts to each PC's hardware.
 - Set `base_fps` to your real FPS when sharing results, so the gain estimates mean something.
 - Test new templates **without** `auto_apply` first. Open the menu, check the selection, then turn on automation.
+- Templates can be shared between Polish and English users without changes. Only the interface language differs.
 - Save templates as UTF-8. Notepad, VS Code and the **E** export all do this by default.
 
 # Any issues or suggestions?
