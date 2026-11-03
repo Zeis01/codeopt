@@ -1,25 +1,366 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
-$Cli = @{ Template = ''; Apply = $false; Yes = $false; List = $false; Help = $false; Bad = '' }
+$Cli = @{ Template = ''; Apply = $false; Yes = $false; List = $false; Help = $false; Lang = ''; Bad = $null }
 for ($ai = 0; $ai -lt $args.Count; $ai++) {
     $v = [string]$args[$ai]
     if ($v -match '^(--?template|-t)$') {
         $ai++
-        if ($ai -lt $args.Count) { $Cli.Template = [string]$args[$ai] } else { $Cli.Bad = '--template needs a path to a .toml file' }
+        if ($ai -lt $args.Count) { $Cli.Template = [string]$args[$ai] } else { $Cli.Bad = @('--template needs a path to a .toml file', '') }
     }
     elseif ($v -match '^--?template[=:](.+)$') { $Cli.Template = $Matches[1] }
+    elseif ($v -match '^--?lang(uage)?$') {
+        $ai++
+        if ($ai -lt $args.Count) { $Cli.Lang = ([string]$args[$ai]).ToLower() } else { $Cli.Bad = @('--lang needs en or pl', '') }
+    }
+    elseif ($v -match '^--?lang(uage)?[=:](\w+)$') { $Cli.Lang = $Matches[2].ToLower() }
     elseif ($v -match '^--?apply$') { $Cli.Apply = $true }
     elseif ($v -match '^(--?yes|-y)$') { $Cli.Yes = $true }
     elseif ($v -match '^(--?list|-l)$') { $Cli.List = $true }
     elseif ($v -match '^(--?help|-h|-\?|/\?)$') { $Cli.Help = $true }
     elseif ($v -match '\.toml$' -and -not $Cli.Template) { $Cli.Template = $v }
-    else { $Cli.Bad = "Unknown option: $v" }
+    else { $Cli.Bad = @('Unknown option: {0}', $v) }
 }
-if ($Cli.Apply -and -not $Cli.Template) { $Cli.Bad = '--apply needs --template <file.toml>' }
+if ($Cli.Apply -and -not $Cli.Template) { $Cli.Bad = @('--apply needs --template <file.toml>', '') }
+if ($Cli.Lang -and $Cli.Lang -notin 'en', 'pl') { $Cli.Bad = @('Unknown language: {0} (use en or pl)', $Cli.Lang) }
+
+$PL = [System.Collections.Hashtable]::new([StringComparer]::Ordinal)
+@(
+    ,@('(real results depend on the game, settings and drivers)', '(rzeczywiste wyniki zależą od gry, ustawień i sterowników)')
+    ,@('({0:+0;-0;0}% to {1:+0;-0;0}%)', '({0:+0;-0;0}% do {1:+0;-0;0}%)')
+    ,@('({0:+0;-0;0}% to {1:+0;-0;0}%) from a base of {2} FPS', '({0:+0;-0;0}% do {1:+0;-0;0}%) przy bazie {2} FPS')
+    ,@('--apply                  Apply the template right away without opening the menu', '--apply                  Zastosuj szablon od razu, bez otwierania menu')
+    ,@('--help                   Show this help', '--help                   Pokaż tę pomoc')
+    ,@('--lang <en|pl>           Interface language (default: saved choice or Windows language)', '--lang <en|pl>           Język interfejsu (domyślnie: zapisany wybór lub język Windows)')
+    ,@('--list                   Print every tweak ID, category and restart requirement', '--list                   Wypisz wszystkie ID poprawek, kategorie i wymagania restartu')
+    ,@('--template <file.toml>   Load a TOML template and preselect its tweaks, DNS and settings', '--template <plik.toml>   Wczytaj szablon TOML i zaznacz jego poprawki, DNS i ustawienia')
+    ,@('--yes                    Skip confirmation and pauses (use with --apply for unattended runs)', '--yes                    Pomiń potwierdzenia i pauzy (z --apply do pracy bez nadzoru)')
+    ,@('CodeOpt - Windows Tweaks & Optimizer', 'CodeOpt - Optymalizator Windows')
+    ,@('Usage: .\CodeOpt.ps1 [options]', 'Użycie: .\CodeOpt.ps1 [opcje]')
+    ,@('Examples:', 'Przykłady:')
+    ,@('--template needs a path to a .toml file', '--template wymaga ścieżki do pliku .toml')
+    ,@('Unknown option: {0}', 'Nieznana opcja: {0}')
+    ,@('--apply needs --template <file.toml>', '--apply wymaga --template <plik.toml>')
+    ,@('Unknown language: {0} (use en or pl)', 'Nieznany język: {0} (użyj en lub pl)')
+    ,@('--lang needs en or pl', '--lang wymaga en lub pl')
+    ,@('APPLY', 'DZIAŁANIE')
+    ,@('CATEGORY', 'KATEGORIA')
+    ,@('RECOMMENDED', 'ZALECANE')
+    ,@('yes', 'tak')
+    ,@('instant', 'od razu')
+    ,@('restart', 'restart')
+    ,@('sign out', 'wylogowanie')
+    ,@('All changes are active now. No restart needed.', 'Wszystkie zmiany już działają. Restart nie jest potrzebny.')
+    ,@('Apply', 'Aktywacja')
+    ,@('BASE', 'BAZA')
+    ,@('BOTTLENECK', 'WĄSKIE GARDŁO')
+    ,@('CUSTOM DNS', 'WŁASNY DNS')
+    ,@('Category {0}/{1}', 'Kategoria {0}/{1}')
+    ,@('CodeOpt closed. Restart to apply all changes.', 'CodeOpt zamknięty. Uruchom ponownie komputer, aby zastosować wszystkie zmiany.')
+    ,@('CodeOpt needs administrator rights. Requesting elevation...', 'CodeOpt wymaga uprawnień administratora. Proszę o ich nadanie...')
+    ,@('Could not relaunch automatically. Open PowerShell as Administrator and run CodeOpt again.', 'Nie udało się uruchomić ponownie automatycznie. Otwórz PowerShell jako administrator i uruchom CodeOpt jeszcze raz.')
+    ,@('DEVICE', 'URZĄDZENIE')
+    ,@('DISK', 'DYSK')
+    ,@('DISPLAY', 'EKRAN')
+    ,@('DNS providers:', 'Dostawcy DNS:')
+    ,@('Desktop', 'Stacjonarny')
+    ,@('Laptop', 'Laptop')
+    ,@('Elevation was cancelled. CodeOpt cannot apply tweaks without administrator rights.', 'Anulowano nadanie uprawnień. CodeOpt nie może zastosować poprawek bez uprawnień administratora.')
+    ,@('Enter/Space', 'Enter/Spacja')
+    ,@('Space', 'Spacja')
+    ,@('Est.', 'Szac.')
+    ,@('Est. total gain', 'Szac. łączny zysk')
+    ,@('Estimated gain', 'Szacowany zysk')
+    ,@('Estimated gain:', 'Szacowany zysk:')
+    ,@('FASTEST', 'NAJSZYBSZY')
+    ,@('File not found: {0}', 'Nie znaleziono pliku: {0}')
+    ,@('IPv4 or IPv6, leave secondary empty to use one server', 'IPv4 lub IPv6, zostaw zapasowy pusty, aby użyć jednego serwera')
+    ,@('Invalid DNS address: {0}', 'Nieprawidłowy adres DNS: {0}')
+    ,@('Invalid address. Press any key...', 'Nieprawidłowy adres. Naciśnij dowolny klawisz...')
+    ,@('Invalid value: {0}', 'Nieprawidłowa wartość: {0}')
+    ,@('Line {0}: cannot read ''{1}''', 'Wiersz {0}: nie można odczytać ''{1}''')
+    ,@('Load it with', 'Wczytaj go poleceniem')
+    ,@('Measuring ping to DNS providers...', 'Mierzę ping do dostawców DNS...')
+    ,@('NOTES', 'UWAGI')
+    ,@('Needs', 'Wymaga')
+    ,@('No restart needed', 'Bez restartu')
+    ,@('Off', 'Wył.')
+    ,@('On', 'Wł.')
+    ,@('PRIMARY', 'GŁÓWNY')
+    ,@('PROVIDER', 'DOSTAWCA')
+    ,@('SECONDARY', 'ZAPASOWY')
+    ,@('Press any key to continue, Esc to quit...', 'Naciśnij dowolny klawisz, aby kontynuować, lub Esc, aby wyjść...')
+    ,@('Press any key to exit...', 'Naciśnij dowolny klawisz, aby wyjść...')
+    ,@('Press any key to return to the menu...', 'Naciśnij dowolny klawisz, aby wrócić do menu...')
+    ,@('Press any key...', 'Naciśnij dowolny klawisz...')
+    ,@('Primary   :', 'Główny    :')
+    ,@('Secondary :', 'Zapasowy  :')
+    ,@('Ready to apply', 'Gotowe do zastosowania:')
+    ,@('tweaks.', 'poprawek.')
+    ,@('Restart required', 'Wymagany restart')
+    ,@('Restarting in 5 seconds...', 'Restart za 5 sekund...')
+    ,@('Restart now?', 'Uruchomić ponownie teraz?')
+    ,@('Sign out now?', 'Wylogować teraz?')
+    ,@('SELECT DNS PROVIDER', 'WYBIERZ DOSTAWCĘ DNS')
+    ,@('Selected', 'Zaznaczono')
+    ,@('of {0}', 'z {0}')
+    ,@('Selection needs', 'Zaznaczenie wymaga')
+    ,@('Sign out required', 'Wymagane wylogowanie')
+    ,@('Signing out...', 'Wylogowywanie...')
+    ,@('TEMPLATE', 'SZABLON')
+    ,@('TEMPLATE WARNINGS', 'OSTRZEŻENIA SZABLONU')
+    ,@('Template saved', 'Zapisano szablon')
+    ,@('The template could not be loaded. Press any key to open the menu...', 'Nie udało się wczytać szablonu. Naciśnij dowolny klawisz, aby otworzyć menu...')
+    ,@('The template selects no tweaks. Nothing to apply.', 'Szablon nie zaznacza żadnych poprawek. Nie ma czego zastosować.')
+    ,@('Type the FPS you get now in your game for exact numbers. Leave empty for the hardware estimate.', 'Wpisz, ile FPS masz teraz w grze, aby dostać dokładne liczby. Zostaw puste, aby użyć szacunku sprzętowego.')
+    ,@('Unknown DNS provider ''{0}''', 'Nieznany dostawca DNS ''{0}''')
+    ,@('Unknown category ''{0}''', 'Nieznana kategoria ''{0}''')
+    ,@('Unknown key {0}', 'Nieznany klucz {0}')
+    ,@('Unknown preset ''{0}'' (use none, recommended, fps, privacy or all)', 'Nieznany preset ''{0}'' (użyj none, recommended, fps, privacy lub all)')
+    ,@('Unknown section [{0}]', 'Nieznana sekcja [{0}]')
+    ,@('Unknown tweak ID ''{0}''', 'Nieznane ID poprawki ''{0}''')
+    ,@('Unknown tweak ID ''{0}'' in {1}', 'Nieznane ID poprawki ''{0}'' w {1}')
+    ,@('Using {0}{1}. {2}. Press Space to change.', 'Używany: {0}{1}. {2}. Naciśnij Spację, aby zmienić.')
+    ,@('Windows Tweaks & Optimizer', 'Optymalizator Windows')
+    ,@('Your FPS:', 'Twoje FPS:')
+    ,@('[Y] yes  [N] later', '[T] tak  [N] później')
+    ,@('all in tab', 'cała karta')
+    ,@('apply', 'zastosuj')
+    ,@('back', 'wróć')
+    ,@('by {0}', 'autor: {0}')
+    ,@('cancel', 'anuluj')
+    ,@('category', 'kategoria')
+    ,@('clear', 'wyczyść')
+    ,@('confirm', 'potwierdź')
+    ,@('dns.provider = ''custom'' needs dns.primary', 'dns.provider = ''custom'' wymaga dns.primary')
+    ,@('done', 'gotowe')
+    ,@('exit', 'wyjście')
+    ,@('export template', 'eksport szablonu')
+    ,@('language PL/EN', 'język PL/EN')
+    ,@('more', 'więcej')
+    ,@('move', 'ruch')
+    ,@('my FPS', 'moje FPS')
+    ,@('no FPS change', 'bez zmiany FPS')
+    ,@('no direct FPS impact', 'brak bezpośredniego wpływu na FPS')
+    ,@('none', 'brak')
+    ,@('not available', 'niedostępne')
+    ,@('pick fastest', 'wybierz najszybszy')
+    ,@('ping is measured from this PC', 'ping mierzony z tego komputera')
+    ,@('recommended', 'zalecane')
+    ,@('select', 'wybierz')
+    ,@('settings.base_fps must be a whole number above 0', 'settings.base_fps musi być liczbą całkowitą większą od 0')
+    ,@('settings.language must be en or pl', 'settings.language musi mieć wartość en lub pl')
+    ,@('settings.restart must be ask, never or always', 'settings.restart musi mieć wartość ask, never lub always')
+    ,@('test ping again', 'zmierz ping ponownie')
+    ,@('timeout', 'brak odp.')
+    ,@('toggle / pick', 'zaznacz / wybierz')
+    ,@('unselect', 'odznacz')
+    ,@('x failed', 'x błąd')
+    ,@('{0} FPS (yours)', '{0} FPS (Twoje)')
+    ,@('{0} instant', 'od razu: {0}')
+    ,@('{0} must be true or false', '{0} musi mieć wartość true lub false')
+    ,@('{0} restart', 'restart: {0}')
+    ,@('{0} restart, {1} sign out', 'restart: {0}, wylogowanie: {1}')
+    ,@('{0} sign out', 'wylogowanie: {0}')
+    ,@('REC', 'ZAL')
+    ,@('{0} tweak(s) need a restart to take effect.', 'Poprawki wymagające restartu: {0}.')
+    ,@('{0} tweak(s) need you to sign out and back in.', 'Poprawki wymagające ponownego zalogowania: {0}.')
+    ,@('{0} warning(s)', 'ostrzeżenia: {0}')
+    ,@('~{0} FPS est.', '~{0} FPS szac.')
+    ,@('Safety', 'Ochrona')
+    ,@('Power', 'Zasilanie')
+    ,@('Gaming', 'Gry')
+    ,@('Input', 'Sterowanie')
+    ,@('Network', 'Sieć')
+    ,@('Privacy', 'Prywatność')
+    ,@('Cleanup', 'Czyszczenie')
+    ,@('Debloat', 'Odchudzanie')
+    ,@('Automatic (DHCP)', 'Automatyczny (DHCP)')
+    ,@('Custom...', 'Własny...')
+    ,@('Custom', 'Własny')
+    ,@('Fast anycast, privacy-first', 'Szybki anycast, nacisk na prywatność')
+    ,@('Blocks malware', 'Blokuje złośliwe oprogramowanie')
+    ,@('Blocks malware and adult content', 'Blokuje malware i treści dla dorosłych')
+    ,@('Very reliable, huge network', 'Bardzo niezawodny, ogromna sieć')
+    ,@('Blocks malware, Swiss privacy', 'Blokuje malware, szwajcarska prywatność')
+    ,@('Cisco, phishing protection', 'Cisco, ochrona przed phishingiem')
+    ,@('Blocks adult content', 'Blokuje treści dla dorosłych')
+    ,@('Blocks ads and trackers', 'Blokuje reklamy i trackery')
+    ,@('Ads, trackers and adult content', 'Reklamy, trackery i treści dla dorosłych')
+    ,@('No filtering', 'Bez filtrowania')
+    ,@('No filtering, low latency', 'Bez filtrowania, niskie opóźnienie')
+    ,@('Blocks malware and phishing', 'Blokuje malware i phishing')
+    ,@('Strict family filter', 'Ścisły filtr rodzinny')
+    ,@('Blocks malicious sites', 'Blokuje złośliwe strony')
+    ,@('Reset to your router or ISP DNS', 'Przywraca DNS routera lub dostawcy internetu')
+    ,@('Enter your own server addresses', 'Wpisz własne adresy serwerów')
+    ,@('Your own servers', 'Twoje własne serwery')
+    ,@('laptop power limits relaxed', 'luźniejsze limity mocy laptopa')
+    ,@('CPU clocks held higher', 'wyższe taktowanie CPU')
+    ,@('clocks stay boosted', 'taktowanie pozostaje podbite')
+    ,@('only {0} threads, parking hurts more', 'tylko {0} wątków, parkowanie szkodzi bardziej')
+    ,@('fewer core wake-ups', 'mniej wybudzeń rdzeni')
+    ,@('integrated GPU, no PCIe link to tune', 'zintegrowane GPU, brak łącza PCIe do strojenia')
+    ,@('laptop link power saving is aggressive', 'laptop agresywnie oszczędza energię łącza')
+    ,@('GPU link stays at full speed', 'łącze GPU działa z pełną prędkością')
+    ,@('laptops throttle background threads hard', 'laptopy mocno dławią wątki w tle')
+    ,@('small effect on desktops', 'mały efekt na komputerach stacjonarnych')
+    ,@('limited CPU/RAM gains from prioritizing', 'słabszy CPU/RAM zyskuje na priorytecie')
+    ,@('mostly helps 1% lows', 'głównie poprawia 1% low')
+    ,@('Game DVR is already off', 'Game DVR jest już wyłączony')
+    ,@('background capture costs a weaker GPU more', 'nagrywanie w tle bardziej obciąża słabsze GPU')
+    ,@('stops background capture', 'zatrzymuje nagrywanie w tle')
+    ,@('exclusive fullscreen games only', 'tylko gry w trybie wyłącznego pełnego ekranu')
+    ,@('borderless and windowed games', 'gry w oknie i bez ramki')
+    ,@('GPU does not support HAGS', 'GPU nie obsługuje HAGS')
+    ,@('CPU-bound, offloads scheduling to GPU', 'limit CPU, planowanie przeniesione na GPU')
+    ,@('GPU-bound, small gain', 'limit GPU, mały zysk')
+    ,@('mainly smoother frametimes', 'głównie płynniejsze czasy klatek')
+    ,@('CPU-bound, game gets longer time slices', 'limit CPU, gra dostaje dłuższe kwanty czasu')
+    ,@('improves 1% lows more than average FPS', 'poprawia bardziej 1% low niż średnie FPS')
+    ,@('only helps if HPET was forced on', 'pomaga tylko, gdy HPET był wymuszony')
+    ,@('fixes stutter, little FPS change', 'naprawia zacięcia, mała zmiana FPS')
+    ,@('VBS is already off on this PC', 'VBS jest już wyłączony na tym PC')
+    ,@('VBS is on and you are CPU-bound', 'VBS jest włączony i masz limit CPU')
+    ,@('VBS is on', 'VBS jest włączony')
+    ,@('less background CPU', 'mniejsze użycie CPU w tle')
+    ,@('no NVIDIA GPU detected', 'nie wykryto GPU NVIDIA')
+    ,@('frees a weaker CPU', 'odciąża słabszy CPU')
+    ,@('prevents random background spikes', 'zapobiega losowym skokom w tle')
+    ,@('frees RAM', 'zwalnia RAM')
+    ,@('iGPU shares load with desktop effects', 'iGPU dzieli moc z efektami pulpitu')
+    ,@('lighter desktop compositor work', 'lżejsza praca kompozytora pulpitu')
+    ,@('iGPU skips blur work', 'iGPU nie liczy rozmycia')
+    ,@('small on a dedicated GPU', 'mały efekt na dedykowanym GPU')
+    ,@('only {0} GB RAM', 'tylko {0} GB RAM')
+    ,@('fewer background processes', 'mniej procesów w tle')
+    ,@('low RAM: compression helps, keep it on', 'mało RAM: kompresja pomaga, zostaw ją')
+    ,@('enough RAM, less CPU overhead', 'wystarczająco RAM, mniejsze obciążenie CPU')
+    ,@('borderline RAM amount', 'graniczna ilość RAM')
+    ,@('HDD loads benefit from SysMain', 'wczytywanie z HDD korzysta z SysMain')
+    ,@('less background disk work', 'mniej pracy dysku w tle')
+    ,@('indexing keeps the HDD busy', 'indeksowanie obciąża HDD')
+    ,@('less background I/O', 'mniej operacji dyskowych w tle')
+    ,@('fewer background apps', 'mniej aplikacji w tle')
+) | ForEach-Object { $PL[$_[0]] = $_[1] }
+
+$TweakPl = @{
+    'create_system_restore_point' = @('Utwórz punkt przywracania', 'Tworzy punkt przywracania, aby każdą zmianę można było cofnąć w Przywracaniu systemu.')
+    'backup_registry_hives' = @('Kopia zapasowa rejestru', 'Eksportuje HKLM\SYSTEM i HKCU\Software do Dokumenty\CodeOpt-Backup.')
+    'ultimate_performance_plan' = @('Plan Najwyższa wydajność', 'Odblokowuje i włącza dostrojony plan zasilania Ultimate Performance.')
+    'disable_core_parking' = @('Wyłącz parkowanie rdzeni', 'Wszystkie rdzenie CPU pozostają aktywne, bez opóźnień przy wybudzaniu.')
+    'disable_usb_selective_suspend' = @('Wyłącz usypianie USB', 'Urządzenia USB, np. mysz i słuchawki, nie przechodzą w uśpienie.')
+    'disable_pcie_link_state_power_saving' = @('Wyłącz oszczędzanie energii PCIe', 'Wyłącza ASPM, aby łącza GPU i NVMe działały z pełną prędkością.')
+    'disable_power_throttling' = @('Wyłącz dławienie energii', 'Windows przestaje ograniczać procesy działające w tle.')
+    'disable_hibernation' = @('Wyłącz hibernację', 'Wyłącza hibernację i usuwa hiberfil.sys, zwalniając miejsce na dysku.')
+    'disable_fast_startup' = @('Wyłącz szybkie uruchamianie', 'Wymusza czysty start za każdym razem, naprawia problemy ze sterownikami.')
+    'enable_game_mode' = @('Włącz tryb gry', 'Windows nadaje priorytet grze i wstrzymuje aktualizacje w tle.')
+    'disable_game_bar_game_dvr' = @('Wyłącz Game Bar i Game DVR', 'Usuwa nagrywanie w tle i nakładkę Xbox Game Bar.')
+    'disable_fullscreen_optimizations' = @('Wyłącz optymalizacje pełnego ekranu', 'Używa wyłącznego pełnego ekranu dla mniejszego input laga.')
+    'optimizations_for_windowed_games' = @('Optymalizacje gier w oknie', 'Włącza model prezentacji flip dla gier w oknie i bez ramki.')
+    'hardware_accelerated_gpu_scheduling' = @('Sprzętowe planowanie GPU (HAGS)', 'GPU samo zarządza planowaniem pamięci. Wymaga obsługiwanej karty.')
+    'mmcss_game_priority' = @('Priorytet gier MMCSS', 'Podnosi priorytet planowania GPU i CPU dla gier.')
+    'cpu_priority_separation' = @('Separacja priorytetów CPU', 'Krótkie, zmienne kwanty czasu faworyzujące aplikację na pierwszym planie (0x26).')
+    'global_timer_resolution' = @('Globalna rozdzielczość zegara', 'Żądania wysokiej rozdzielczości zegara działają w całym systemie.')
+    'disable_dynamic_tick' = @('Wyłącz dynamiczny tick', 'Zegar systemowy tyka ze stałą częstotliwością.')
+    'disable_hpet_platform_clock' = @('Wyłącz zegar platformy HPET', 'Usuwa wymuszony HPET na rzecz szybszego źródła czasu.')
+    'disable_multiplane_overlay_mpo' = @('Wyłącz Multiplane Overlay (MPO)', 'Naprawia migotanie i zacięcia na niektórych kartach NVIDIA i przy wielu monitorach.')
+    'disable_vbs_memory_integrity' = @('Wyłącz VBS i integralność pamięci', 'Więcej FPS na niektórych CPU, ale niższe bezpieczeństwo systemu.')
+    'disable_nvidia_telemetry' = @('Wyłącz telemetrię NVIDIA', 'Wyłącza zadania, usługę i zgodę na telemetrię NVIDIA.')
+    'disable_mouse_acceleration' = @('Wyłącz akcelerację myszy', 'Wyłącza "Zwiększ precyzję wskaźnika" dla celowania 1:1.')
+    'mouse_keyboard_data_queue' = @('Kolejka danych myszy i klawiatury', 'Zmniejsza bufory wejścia dla szybszej obsługi sterowania.')
+    'fast_keyboard_repeat' = @('Szybkie powtarzanie klawiszy', 'Najkrótsze opóźnienie i najszybsze tempo powtarzania klawiszy.')
+    'disable_sticky_filter_toggle_keys' = @('Wyłącz klawisze trwałe i filtru', 'Koniec okienek ułatwień dostępu po wielokrotnym wciśnięciu Shift w grach.')
+    'disable_nagles_algorithm' = @('Wyłącz algorytm Nagle''a', 'Małe pakiety są wysyłane od razu, niższe opóźnienie w grach online.')
+    'disable_network_throttling' = @('Wyłącz dławienie sieci', 'Usuwa multimedialny limit dławienia sieci.')
+    'optimize_tcp_stack' = @('Optymalizuj stos TCP', 'Dostraja auto-tuning, RSS, heurystykę i znaczniki czasu.')
+    'disable_adapter_power_saving' = @('Wyłącz oszczędzanie energii karty sieciowej', 'Karty sieciowe nie usypiają i nie obniżają prędkości.')
+    'disable_interrupt_moderation' = @('Wyłącz moderację przerwań', 'Niższe opóźnienie sieci kosztem nieco większego użycia CPU.')
+    'disable_large_send_offload' = @('Wyłącz Large Send Offload', 'Naprawia skoki opóźnień na niektórych sterownikach sieciowych.')
+    'remove_qos_bandwidth_reserve' = @('Usuń rezerwę pasma QoS', 'Zwalnia pasmo rezerwowane przez Windows dla QoS.')
+    'disable_delivery_optimization_p2p' = @('Wyłącz optymalizację dostarczania P2P', 'Windows przestaje wysyłać aktualizacje innym komputerom.')
+    'set_dns_server' = @('Ustaw serwer DNS', 'Naciśnij Spację, aby wybrać dostawcę DNS z listy. Ping do każdego jest mierzony.')
+    'flush_dns_arp_cache' = @('Wyczyść pamięć DNS i ARP', 'Usuwa nieaktualne wpisy DNS i ARP.')
+    'disable_telemetry' = @('Wyłącz telemetrię', 'Ustawia telemetrię na minimum i wyłącza usługi śledzące.')
+    'disable_telemetry_tasks' = @('Wyłącz zadania telemetrii', 'Wyłącza CEIP, Compatibility Appraiser i zadania diagnostyczne.')
+    'disable_advertising_id' = @('Wyłącz identyfikator reklamowy', 'Aplikacje nie mogą używać Twojego identyfikatora reklamowego.')
+    'disable_activity_history' = @('Wyłącz historię aktywności', 'Windows nie zbiera i nie wysyła historii aktywności.')
+    'disable_bing_in_start_search' = @('Wyłącz Bing w wyszukiwaniu Start', 'Wyszukiwanie w menu Start pokazuje tylko wyniki lokalne.')
+    'disable_copilot_recall' = @('Wyłącz Copilot i Recall', 'Wyłącza Windows Copilot i zrzuty ekranu Recall.')
+    'disable_error_reporting' = @('Wyłącz raportowanie błędów', 'Raporty o awariach nie są wysyłane do Microsoftu.')
+    'disable_feedback_prompts' = @('Wyłącz prośby o opinię', 'Windows nigdy nie prosi o opinię.')
+    'disable_location_tracking' = @('Wyłącz śledzenie lokalizacji', 'Wyłącza usługi lokalizacji w całym systemie.')
+    'performance_visual_effects' = @('Efekty wizualne: wydajność', 'Wyłącza animacje, zachowując wygładzanie czcionek i miniatury.')
+    'disable_transparency' = @('Wyłącz przezroczystość', 'Wyłącza efekty akrylu i rozmycia.')
+    'disable_background_apps' = @('Wyłącz aplikacje w tle', 'Aplikacje ze Sklepu nie działają w tle.')
+    'remove_startup_delay' = @('Usuń opóźnienie autostartu', 'Aplikacje z autostartu uruchamiają się od razu po zalogowaniu.')
+    'instant_menus' = @('Natychmiastowe menu', 'Usuwa opóźnienie menu i przyspiesza zamykanie systemu.')
+    'disable_memory_compression' = @('Wyłącz kompresję pamięci', 'Mniejsze obciążenie CPU. Najlepiej przy 16 GB RAM lub więcej.')
+    'keep_kernel_in_ram' = @('Trzymaj jądro w RAM', 'Sterowniki i jądro nie są przenoszone do pliku stronicowania.')
+    'disable_sysmain_superfetch' = @('Wyłącz SysMain (Superfetch)', 'Mniej aktywności dysku. Zalecane przy dyskach SSD.')
+    'disable_search_indexing' = @('Wyłącz indeksowanie wyszukiwania', 'Zatrzymuje indeksowanie plików w tle. Wyszukiwanie działa wolniej.')
+    'ntfs_optimizations' = @('Optymalizacje NTFS', 'Wyłącza znaczniki ostatniego dostępu i krótkie nazwy 8.3.')
+    'disable_unneeded_services' = @('Wyłącz zbędne usługi', 'Faks, Rejestr zdalny, Mapy, Tryb demo, Insider i inne.')
+    'disable_tips_suggestions' = @('Wyłącz porady i sugestie', 'Usuwa reklamy, sugerowane aplikacje i ciche instalacje aplikacji.')
+    'disable_widgets' = @('Wyłącz widżety', 'Usuwa tablicę widżetów i jej proces w tle.')
+    'classic_context_menu' = @('Klasyczne menu kontekstowe', 'Przywraca pełne menu prawego przycisku myszy w Windows 11.')
+    'show_file_extensions' = @('Pokaż rozszerzenia plików', 'Eksplorator zawsze pokazuje rozszerzenia plików.')
+    'disable_edge_background_running' = @('Wyłącz Edge w tle', 'Wyłącza Startup Boost i tryb pracy w tle przeglądarki Edge.')
+    'clean_temp_files' = @('Wyczyść pliki tymczasowe', 'Usuwa pliki tymczasowe użytkownika i systemu.')
+    'clear_shader_caches' = @('Wyczyść pamięć shaderów', 'Czyści pamięć shaderów DirectX, NVIDIA i AMD.')
+    'clear_windows_update_cache' = @('Wyczyść pamięć Windows Update', 'Usuwa pobrane pliki aktualizacji.')
+    'empty_recycle_bin' = @('Opróżnij kosz', 'Trwale usuwa całą zawartość kosza.')
+    'dism_component_cleanup' = @('Czyszczenie komponentów DISM', 'Zmniejsza folder WinSxS. Może potrwać kilka minut.')
+    'remove_bloatware_apps' = @('Usuń zbędne aplikacje', 'Wiadomości, Pogoda, Pasjans, Clipchamp, Porady, Centrum opinii i inne.')
+    'remove_xbox_apps' = @('Usuń aplikacje Xbox', 'Usuwa aplikację Xbox i nakładki. Psuje Game Pass.')
+    'uninstall_onedrive' = @('Odinstaluj OneDrive', 'Usuwa OneDrive. Zsynchronizowane pliki zostają na komputerze.')
+}
+
+$TagPl = @(
+    ,@('-DISK USAGE', '-UŻYCIE DYSKU')
+    ,@('+DISK SPEED', '+SZYBKI DYSK')
+    ,@('-CPU USAGE', '-UŻYCIE CPU')
+    ,@('+DNS SPEED', '+SZYBKI DNS')
+    ,@('+UI SPEED', '+SZYBKI UI')
+    ,@('+1% LOWS', '+1% LOW')
+    ,@('NO POPUPS', 'BEZ OKIENEK')
+    ,@('-STUTTER', '-ZACIĘCIA')
+    ,@('+STABILITY', '+STABILNOŚĆ')
+    ,@('-LATENCY', '-OPÓŹNIENIE')
+    ,@('-SECURITY', '-OCHRONA')
+    ,@('+SECURITY', '+OCHRONA')
+    ,@('+PRIVACY', '+PRYWATNOŚĆ')
+    ,@('+RESPONSE', '+REAKCJA')
+    ,@('+BANDWIDTH', '+PASMO')
+    ,@('-SPIKES', '-SKOKI')
+    ,@('+SPEED', '+SZYBKOŚĆ')
+    ,@('+DISK', '+DYSK')
+    ,@('+BOOT', '+START')
+    ,@('+AIM', '+CELNOŚĆ')
+    ,@('SAFE', 'BEZPIECZNE')
+    ,@('FIX', 'NAPRAWA')
+)
+
+function Tr {
+    param([string]$K)
+    $s = $K
+    if ($script:Lang -eq 'pl' -and $K) {
+        $m = [regex]::Match($K, '^(\s*)(.*?)(\s*)$')
+        $v = $PL[$m.Groups[2].Value]
+        if ($null -ne $v) { $s = $m.Groups[1].Value + $v + $m.Groups[3].Value }
+    }
+    if ($args.Count) { try { $s -f $args } catch { $s } } else { $s }
+}
+
+$script:Lang = 'en'
+$savedLang = (Get-ItemProperty -Path 'HKCU:\Software\CodeOpt' -Name 'Language').Language
+if ($savedLang -in 'en', 'pl') { $script:Lang = $savedLang }
+elseif ((Get-UICulture).TwoLetterISOLanguageName -eq 'pl' -or (Get-Culture).TwoLetterISOLanguageName -eq 'pl') { $script:Lang = 'pl' }
+if ($Cli.Lang -in 'en', 'pl') { $script:Lang = $Cli.Lang }
+
 
 if ($Cli.Help -or $Cli.Bad) {
-    if ($Cli.Bad) { Write-Host ''; Write-Host "  $($Cli.Bad)" -ForegroundColor Red }
+    if ($Cli.Bad) { Write-Host ''; Write-Host ('  ' + (Tr $Cli.Bad[0] $Cli.Bad[1])) -ForegroundColor Red }
     @(
         '',
         '  CodeOpt - Windows Tweaks & Optimizer',
@@ -27,6 +368,7 @@ if ($Cli.Help -or $Cli.Bad) {
         '  Usage: .\CodeOpt.ps1 [options]',
         '',
         '    --template <file.toml>   Load a TOML template and preselect its tweaks, DNS and settings',
+        '    --lang <en|pl>           Interface language (default: saved choice or Windows language)',
         '    --apply                  Apply the template right away without opening the menu',
         '    --yes                    Skip confirmation and pauses (use with --apply for unattended runs)',
         '    --list                   Print every tweak ID, category and restart requirement',
@@ -35,9 +377,9 @@ if ($Cli.Help -or $Cli.Bad) {
         '  Examples:',
         '    .\CodeOpt.ps1 --template competitive-fps.toml',
         '    .\CodeOpt.ps1 --template competitive-fps.toml --apply --yes',
-        '    .\CodeOpt.ps1 --list',
+        '    .\CodeOpt.ps1 --list --lang pl',
         ''
-    ) | ForEach-Object { Write-Host $_ -ForegroundColor Cyan }
+    ) | ForEach-Object { Write-Host (Tr $_) -ForegroundColor Cyan }
     exit
 }
 
@@ -50,7 +392,7 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $IsAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $IsAdmin -and -not $Cli.List) {
     Write-Host ''
-    Write-Host '  CodeOpt needs administrator rights. Requesting elevation...' -ForegroundColor Cyan
+    Write-Host (Tr '  CodeOpt needs administrator rights. Requesting elevation...') -ForegroundColor Cyan
     $self = $PSCommandPath
     if (-not $self) {
         $body = $MyInvocation.MyCommand.ScriptBlock
@@ -66,16 +408,17 @@ if (-not $IsAdmin -and -not $Cli.List) {
         if ($Cli.Template) { $pass += @('--template', "`"$($Cli.Template)`"") }
         if ($Cli.Apply) { $pass += '--apply' }
         if ($Cli.Yes) { $pass += '--yes' }
+        $pass += @('--lang', $script:Lang)
         try {
             Start-Process -FilePath $exe -ArgumentList ($pass -join ' ') -Verb RunAs -WorkingDirectory (Get-Location).ProviderPath -ErrorAction Stop
             exit
         } catch {
-            Write-Host '  Elevation was cancelled. CodeOpt cannot apply tweaks without administrator rights.' -ForegroundColor Red
+            Write-Host (Tr '  Elevation was cancelled. CodeOpt cannot apply tweaks without administrator rights.') -ForegroundColor Red
         }
     } else {
-        Write-Host '  Could not relaunch automatically. Open PowerShell as Administrator and run CodeOpt again.' -ForegroundColor Red
+        Write-Host (Tr '  Could not relaunch automatically. Open PowerShell as Administrator and run CodeOpt again.') -ForegroundColor Red
     }
-    Write-Host '  Press any key to exit...' -ForegroundColor DarkGray
+    Write-Host (Tr '  Press any key to exit...') -ForegroundColor DarkGray
     [void][Console]::ReadKey($true)
     exit
 }
@@ -130,7 +473,7 @@ function T {
     param([string]$Cat, [string]$Name, [string]$Desc, [bool]$Rec, [scriptblock]$Do)
     $Tags = ''
     if ($Desc -match '^\[(.+?)\]\s*(.*)$') { $Tags = $Matches[1]; $Desc = $Matches[2] }
-    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Tags = $Tags; Fps = ($Tags -match '\+FPS'); Rec = $Rec; Do = $Do; Sel = $false; GMin = 0; GMax = 0; GWhy = ''; Id = ''; Reboot = 'None'; Pick = $false; Opt = $null })
+    $Tweaks.Add([pscustomobject]@{ Cat = $Cat; Name = $Name; Desc = $Desc; Tags = $Tags; Fps = ($Tags -match '\+FPS'); Rec = $Rec; Do = $Do; Sel = $false; GMin = 0; GMax = 0; GWhy = ''; Id = ''; Reboot = 'None'; Pick = $false; Opt = $null; GArg = $null })
 }
 
 T 'Safety' 'Create System Restore Point' '[SAFE] Creates a restore point so every change can be rolled back from System Restore.' $true {
@@ -514,18 +857,38 @@ foreach ($t in $Tweaks) {
 
 function Find-Tweak { param([string]$Id) $x = ($Id.Trim().ToLower() -replace '[^a-z0-9]+', '_').Trim('_'); $Tweaks | Where-Object { $_.Id -eq $x } | Select-Object -First 1 }
 function Get-DnsChoice { param($t) if ($t.Opt) { $t.Opt } else { $Dns[0] } }
-function Get-TweakName { param($t) if ($t.Pick -and $t.Sel) { $t.Name + ': ' + (Get-DnsChoice $t).Name } else { $t.Name } }
+function Get-TweakBase { param($t) if ($script:Lang -eq 'pl' -and $TweakPl[$t.Id]) { $TweakPl[$t.Id][0] } else { $t.Name } }
+function Get-TweakDesc { param($t) if ($script:Lang -eq 'pl' -and $TweakPl[$t.Id]) { $TweakPl[$t.Id][1] } else { $t.Desc } }
+function Get-TweakName { param($t) if ($t.Pick -and $t.Sel) { (Get-TweakBase $t) + ': ' + (Tr (Get-DnsChoice $t).Name) } else { Get-TweakBase $t } }
+function Get-TagText {
+    param([string]$Tags)
+    if ($script:Lang -ne 'pl' -or -not $Tags) { return $Tags }
+    $s = $Tags
+    foreach ($p in $TagPl) { $s = $s -replace ('(?<![^\s])' + [regex]::Escape($p[0]) + '(?![^\s])'), $p[1] }
+    $s
+}
+function Update-Layout {
+    $script:NameW = 38; $script:TagW = 23
+    foreach ($t in $Tweaks) {
+        $n = (Get-TweakBase $t).Length
+        if ($t.Pick) { $n += 24 }
+        if ($n + 1 -gt $script:NameW) { $script:NameW = $n + 1 }
+        $g = (Get-TagText $t.Tags).Length
+        if ($g + 1 -gt $script:TagW) { $script:TagW = $g + 1 }
+    }
+    $script:NameW = [Math]::Min(48, $script:NameW)
+}
 function Test-Ip { param([string]$A) $x = $null; [System.Net.IPAddress]::TryParse($A, [ref]$x) }
 
 if ($Cli.List) {
     Write-Host ''
-    Write-Host ('  {0,-40} {1,-9} {2,-9} {3}' -f 'ID', 'CATEGORY', 'APPLY', 'RECOMMENDED') -ForegroundColor Cyan
+    Write-Host ('  {0,-40} {1,-15} {2,-13} {3}' -f 'ID', (Tr 'CATEGORY'), (Tr 'APPLY'), (Tr 'RECOMMENDED')) -ForegroundColor Cyan
     foreach ($t in $Tweaks) {
-        $ap = if ($t.Reboot -eq 'None') { 'instant' } else { $t.Reboot.ToLower() }
-        Write-Host ('  {0,-40} {1,-9} {2,-9} {3}' -f $t.Id, $t.Cat, $ap, $(if ($t.Rec) { 'yes' } else { '' })) -ForegroundColor Gray
+        $ap = if ($t.Reboot -eq 'None') { Tr 'instant' } else { Tr $t.Reboot.ToLower() }
+        Write-Host ('  {0,-40} {1,-15} {2,-13} {3}' -f $t.Id, (Tr $t.Cat), $ap, $(if ($t.Rec) { Tr 'yes' } else { '' })) -ForegroundColor Gray
     }
     Write-Host ''
-    Write-Host ('  DNS providers: ' + (($Dns | ForEach-Object { $_.Id }) -join ', ')) -ForegroundColor DarkCyan
+    Write-Host ((Tr '  DNS providers: ') + (($Dns | ForEach-Object { $_.Id }) -join ', ')) -ForegroundColor DarkCyan
     Write-Host ''
     exit
 }
@@ -622,11 +985,11 @@ $HW = Get-HW
 $script:Base = $HW.BaseFps
 $script:BaseSrc = 'est'
 
-function Gn { param($a, $b, $r) $a, $b, $r }
+function Gn { param($a, $b, $r, $x) $a, $b, $r, $x }
 
 $Gain = @{
     'Ultimate Performance Plan' = { if ($HW.Laptop) { Gn 3 8 'laptop power limits relaxed' } elseif ($HW.CpuScore -lt 6) { Gn 2 5 'CPU clocks held higher' } else { Gn 1 3 'clocks stay boosted' } }
-    'Disable Core Parking' = { if ($HW.Threads -le 8) { Gn 2 5 "only $($HW.Threads) threads, parking hurts more" } else { Gn 1 3 'fewer core wake-ups' } }
+    'Disable Core Parking' = { if ($HW.Threads -le 8) { Gn 2 5 'only {0} threads, parking hurts more' $HW.Threads } else { Gn 1 3 'fewer core wake-ups' } }
     'Disable PCIe Link State Power Saving' = { if ($HW.IGpu) { Gn 0 0 'integrated GPU, no PCIe link to tune' } elseif ($HW.Laptop) { Gn 1 3 'laptop link power saving is aggressive' } else { Gn 0 2 'GPU link stays at full speed' } }
     'Disable Power Throttling' = { if ($HW.Laptop) { Gn 2 5 'laptops throttle background threads hard' } else { Gn 0 2 'small effect on desktops' } }
     'Enable Game Mode' = { if ($HW.Threads -le 6 -or $HW.RamGB -le 8) { Gn 2 5 'limited CPU/RAM gains from prioritizing' } else { Gn 0 2 'mostly helps 1% lows' } }
@@ -646,7 +1009,7 @@ $Gain = @{
     'Disable Copilot & Recall' = { if ($HW.RamGB -le 16) { Gn 0 2 'frees RAM' } else { Gn 0 1 'frees RAM' } }
     'Performance Visual Effects' = { if ($HW.IGpu) { Gn 2 5 'iGPU shares load with desktop effects' } else { Gn 0 2 'lighter desktop compositor work' } }
     'Disable Transparency' = { if ($HW.IGpu) { Gn 1 3 'iGPU skips blur work' } else { Gn 0 1 'small on a dedicated GPU' } }
-    'Disable Background Apps' = { if ($HW.RamGB -le 8) { Gn 2 6 "only $($HW.RamGB) GB RAM" } else { Gn 0 2 'fewer background processes' } }
+    'Disable Background Apps' = { if ($HW.RamGB -le 8) { Gn 2 6 'only {0} GB RAM' $HW.RamGB } else { Gn 0 2 'fewer background processes' } }
     'Disable Memory Compression' = { if ($HW.RamGB -le 8) { Gn -4 0 'low RAM: compression helps, keep it on' } elseif ($HW.RamGB -ge 16) { Gn 0 2 'enough RAM, less CPU overhead' } else { Gn -1 1 'borderline RAM amount' } }
     'Disable SysMain (Superfetch)' = { if ($HW.Disk -eq 'HDD') { Gn -2 0 'HDD loads benefit from SysMain' } else { Gn 0 1 'less background disk work' } }
     'Disable Search Indexing' = { if ($HW.Disk -eq 'HDD') { Gn 1 3 'indexing keeps the HDD busy' } else { Gn 0 1 'less background I/O' } }
@@ -659,7 +1022,7 @@ $Gain = @{
 foreach ($t in $Tweaks) {
     if ($Gain.ContainsKey($t.Name)) {
         $r = @(& $Gain[$t.Name])
-        $t.GMin = [double]$r[0]; $t.GMax = [double]$r[1]; $t.GWhy = [string]$r[2]
+        $t.GMin = [double]$r[0]; $t.GMax = [double]$r[1]; $t.GWhy = [string]$r[2]; $t.GArg = $r[3]
     }
 }
 
@@ -726,7 +1089,7 @@ function ConvertFrom-TomlValue {
         $items = @(Split-TomlList $R.Substring(1, $R.Length - 2) | ForEach-Object { ConvertFrom-TomlValue $_ })
         return , $items
     }
-    $script:TomlErr.Add("Invalid value: $R")
+    $script:TomlErr.Add((Tr 'Invalid value: {0}' $R))
     $null
 }
 
@@ -759,7 +1122,7 @@ function ConvertFrom-Toml {
             $cur[$key] = ConvertFrom-TomlValue $raw
             continue
         }
-        $script:TomlErr.Add("Line ${n}: cannot read '$line'")
+        $script:TomlErr.Add((Tr "Line {0}: cannot read '{1}'" $n $line))
     }
     $root
 }
@@ -767,25 +1130,25 @@ function ConvertFrom-Toml {
 function Get-TomlBool {
     param($V, [string]$Where)
     if ($V -is [bool]) { return $V }
-    $script:TplWarn.Add("$Where must be true or false")
+    $script:TplWarn.Add((Tr '{0} must be true or false' $Where))
     $null
 }
 
 function Import-DnsSection {
     param($D)
     $t = Find-Tweak 'set_dns_server'
-    foreach ($k in @($D.Keys)) { if ($k -notin 'enabled', 'provider', 'primary', 'secondary', 'primary_v6', 'secondary_v6', 'doh', 'doh_template', 'ipv6') { $script:TplWarn.Add("Unknown key dns.$k") } }
+    foreach ($k in @($D.Keys)) { if ($k -notin 'enabled', 'provider', 'primary', 'secondary', 'primary_v6', 'secondary_v6', 'doh', 'doh_template', 'ipv6') { $script:TplWarn.Add((Tr 'Unknown key {0}' "dns.$k")) } }
     if ($null -ne $D['enabled'] -and (Get-TomlBool $D['enabled'] 'dns.enabled') -eq $false) { $t.Sel = $false; $t.Opt = $null; return }
     $pv = if ($D['provider']) { ([string]$D['provider']).ToLower() } elseif ($D['primary']) { 'custom' } else { 'cloudflare' }
     $base = $Dns | Where-Object { $_.Id -eq $pv } | Select-Object -First 1
-    if (-not $base) { $script:TplWarn.Add("Unknown DNS provider '$pv'"); return }
+    if (-not $base) { $script:TplWarn.Add((Tr "Unknown DNS provider '{0}'" $pv)); return }
     $o = $base.Clone()
     if ($pv -eq 'custom') {
         $v4 = @(@($D['primary'], $D['secondary']) | Where-Object { $_ } | ForEach-Object { [string]$_ })
         $v6 = @(@($D['primary_v6'], $D['secondary_v6']) | Where-Object { $_ } | ForEach-Object { [string]$_ })
         $bad = @(@($v4 + $v6) | Where-Object { -not (Test-Ip $_) })
-        if ($bad.Count) { $script:TplWarn.Add("Invalid DNS address: $($bad -join ', ')"); return }
-        if (($v4.Count + $v6.Count) -eq 0) { $script:TplWarn.Add("dns.provider = 'custom' needs dns.primary"); return }
+        if ($bad.Count) { $script:TplWarn.Add((Tr 'Invalid DNS address: {0}' ($bad -join ', '))); return }
+        if (($v4.Count + $v6.Count) -eq 0) { $script:TplWarn.Add((Tr "dns.provider = 'custom' needs dns.primary")); return }
         $o.V4 = $v4; $o.V6 = $v6; $o.Name = 'Custom'; $o.Note = 'Your own servers'
         $o.Doh = if ($D['doh_template']) { [string]$D['doh_template'] } else { '' }
     }
@@ -799,11 +1162,22 @@ function Import-Template {
     param([string]$Path)
     $script:TomlErr = [System.Collections.Generic.List[string]]::new()
     $script:TplWarn = [System.Collections.Generic.List[string]]::new()
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { $script:TplWarn.Add("File not found: $Path"); return $false }
-    $cfg = ConvertFrom-Toml ([IO.File]::ReadAllText($Path))
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { $script:TplWarn.Add((Tr 'File not found: {0}' $Path)); return $false }
+    $text = [IO.File]::ReadAllText($Path)
+    $cfg = ConvertFrom-Toml $text
+    $st0 = $cfg['settings']
+    if ($st0 -and $st0['language'] -and -not $Cli.Lang) {
+        $lg = ([string]$st0['language']).ToLower()
+        if ($lg -in 'en', 'pl' -and $lg -ne $script:Lang) { $script:Lang = $lg; $script:TomlErr.Clear(); $cfg = ConvertFrom-Toml $text }
+    }
     foreach ($e in $script:TomlErr) { $script:TplWarn.Add($e) }
-    foreach ($k in @($cfg.Keys)) { if ($k -notin 'template', 'settings', 'categories', 'tweaks', 'dns') { $script:TplWarn.Add("Unknown section [$k]") } }
+    foreach ($k in @($cfg.Keys)) { if ($k -notin 'template', 'settings', 'categories', 'tweaks', 'dns') { $script:TplWarn.Add((Tr 'Unknown section [{0}]' $k)) } }
     $tp = $cfg['template']; $st = $cfg['settings']; $ct = $cfg['categories']; $tw = $cfg['tweaks']; $dn = $cfg['dns']
+    if ($st -and $st['language']) {
+        $lg = ([string]$st['language']).ToLower()
+        if ($lg -notin 'en', 'pl') { $script:TplWarn.Add((Tr 'settings.language must be en or pl')) }
+        elseif (-not $Cli.Lang) { $script:Lang = $lg }
+    }
     $script:TplName = if ($tp -and $tp['name']) { [string]$tp['name'] } else { [IO.Path]::GetFileNameWithoutExtension($Path) }
     $script:TplAuthor = if ($tp -and $tp['author']) { [string]$tp['author'] } else { '' }
     foreach ($t in $Tweaks) { $t.Sel = $false; $t.Opt = $null }
@@ -814,12 +1188,12 @@ function Import-Template {
         'all' { foreach ($t in $Tweaks) { $t.Sel = $true } }
         'fps' { foreach ($t in $Tweaks) { $t.Sel = ($t.Fps -and $t.GMax -gt 0 -and $t.GMin -ge 0 -and $t.Tags -notmatch '-SECURITY') -or $t.Id -eq 'create_system_restore_point' } }
         'privacy' { foreach ($t in $Tweaks) { $t.Sel = ($t.Cat -eq 'Privacy') -or $t.Id -eq 'create_system_restore_point' } }
-        default { $script:TplWarn.Add("Unknown preset '$preset' (use none, recommended, fps, privacy or all)") }
+        default { $script:TplWarn.Add((Tr "Unknown preset '{0}' (use none, recommended, fps, privacy or all)" $preset)) }
     }
     if ($ct) {
         foreach ($k in @($ct.Keys)) {
             $cat = $Cats | Where-Object { $_ -eq $k } | Select-Object -First 1
-            if (-not $cat) { $script:TplWarn.Add("Unknown category '$k'"); continue }
+            if (-not $cat) { $script:TplWarn.Add((Tr "Unknown category '{0}'" $k)); continue }
             $b = Get-TomlBool $ct[$k] "categories.$k"
             if ($null -ne $b) { foreach ($t in $Tweaks) { if ($t.Cat -eq $cat) { $t.Sel = $b } } }
         }
@@ -829,11 +1203,11 @@ function Import-Template {
             if ($k -in 'enable', 'disable') {
                 foreach ($id in @($tw[$k])) {
                     $t = Find-Tweak ([string]$id)
-                    if ($t) { $t.Sel = ($k -eq 'enable') } else { $script:TplWarn.Add("Unknown tweak ID '$id' in tweaks.$k") }
+                    if ($t) { $t.Sel = ($k -eq 'enable') } else { $script:TplWarn.Add((Tr "Unknown tweak ID '{0}' in {1}" $id "tweaks.$k")) }
                 }
             } else {
                 $t = Find-Tweak $k
-                if (-not $t) { $script:TplWarn.Add("Unknown tweak ID '$k'"); continue }
+                if (-not $t) { $script:TplWarn.Add((Tr "Unknown tweak ID '{0}'" $k)); continue }
                 $b = Get-TomlBool $tw[$k] "tweaks.$k"
                 if ($null -ne $b) { $t.Sel = $b }
             }
@@ -841,17 +1215,17 @@ function Import-Template {
     }
     if ($dn) { Import-DnsSection $dn }
     if ($st) {
-        foreach ($k in @($st.Keys)) { if ($k -notin 'preset', 'auto_apply', 'confirm', 'restart', 'base_fps', 'restore_point') { $script:TplWarn.Add("Unknown key settings.$k") } }
+        foreach ($k in @($st.Keys)) { if ($k -notin 'preset', 'auto_apply', 'confirm', 'restart', 'base_fps', 'restore_point', 'language') { $script:TplWarn.Add((Tr 'Unknown key {0}' "settings.$k")) } }
         if ($null -ne $st['base_fps']) {
             $v = $st['base_fps']
-            if ($v -is [int64] -and $v -gt 0) { $script:Base = [int]$v; $script:BaseSrc = 'user' } else { $script:TplWarn.Add('settings.base_fps must be a whole number above 0') }
+            if ($v -is [int64] -and $v -gt 0) { $script:Base = [int]$v; $script:BaseSrc = 'user' } else { $script:TplWarn.Add((Tr 'settings.base_fps must be a whole number above 0')) }
         }
         if ($null -ne $st['auto_apply']) { $b = Get-TomlBool $st['auto_apply'] 'settings.auto_apply'; if ($null -ne $b) { $script:AutoApply = $b } }
         if ($null -ne $st['confirm']) { $b = Get-TomlBool $st['confirm'] 'settings.confirm'; if ($null -ne $b) { $script:SkipConfirm = -not $b } }
         if ($null -ne $st['restore_point']) { $b = Get-TomlBool $st['restore_point'] 'settings.restore_point'; if ($null -ne $b) { (Find-Tweak 'create_system_restore_point').Sel = $b } }
         if ($null -ne $st['restart']) {
             $r = ([string]$st['restart']).ToLower()
-            if ($r -in 'ask', 'never', 'always') { $script:RestartMode = $r } else { $script:TplWarn.Add("settings.restart must be ask, never or always") }
+            if ($r -in 'ask', 'never', 'always') { $script:RestartMode = $r } else { $script:TplWarn.Add((Tr 'settings.restart must be ask, never or always')) }
         }
     }
     $true
@@ -876,6 +1250,7 @@ function Export-Template {
     $L.Add('auto_apply = false')
     $L.Add('confirm = true')
     $L.Add("restart = $q$($script:RestartMode)$q")
+    $L.Add("language = $q$($script:Lang)$q")
     if ($script:BaseSrc -eq 'user') { $L.Add("base_fps = $($script:Base)") }
     $L.Add('')
     $L.Add('[tweaks]')
@@ -927,18 +1302,18 @@ function Read-CustomDns {
     Clear-Host
     Show-Banner
     Out-Line @((S ''))
-    Out-Line @((S '  CUSTOM DNS ' 'White' 'DarkBlue'), (S '   IPv4 or IPv6, leave secondary empty to use one server' 'DarkCyan'))
+    Out-Line @((S (Tr '  CUSTOM DNS ') 'White' 'DarkBlue'), (S (Tr '   IPv4 or IPv6, leave secondary empty to use one server') 'DarkCyan'))
     Out-Line @((S ''))
     [Console]::CursorVisible = $true
-    Write-Host '  Primary   : ' -ForegroundColor Cyan -NoNewline
+    Write-Host (Tr '  Primary   : ') -ForegroundColor Cyan -NoNewline
     $a1 = ([string](Read-Host)).Trim()
-    Write-Host '  Secondary : ' -ForegroundColor Cyan -NoNewline
+    Write-Host (Tr '  Secondary : ') -ForegroundColor Cyan -NoNewline
     $a2 = ([string](Read-Host)).Trim()
     [Console]::CursorVisible = $false
     $all = @(@($a1, $a2) | Where-Object { $_ })
     $bad = @($all | Where-Object { -not (Test-Ip $_) })
     if ($all.Count -eq 0 -or $bad.Count) {
-        Write-Host '  Invalid address. Press any key...' -ForegroundColor Red
+        Write-Host (Tr '  Invalid address. Press any key...') -ForegroundColor Red
         [void][Console]::ReadKey($true)
         Clear-Host
         return $null
@@ -957,7 +1332,7 @@ function Show-DnsPicker {
         Clear-Host
         Show-Banner
         Out-Line @((S ''))
-        Out-Line @((S '  Measuring ping to DNS providers...' 'Cyan'))
+        Out-Line @((S (Tr '  Measuring ping to DNS providers...') 'Cyan'))
         $script:DnsPing = Get-DnsLatency
     }
     $best = Get-BestDns
@@ -969,8 +1344,8 @@ function Show-DnsPicker {
         [Console]::SetCursorPosition(0, 0)
         Show-Banner
         Out-Line @((S ''))
-        Out-Line @((S '  SELECT DNS PROVIDER ' 'White' 'DarkBlue'), (S '   ping is measured from this PC' 'DarkCyan'))
-        Out-Line @((S ('      ' + 'PROVIDER'.PadRight(23) + 'PRIMARY'.PadRight(17) + 'SECONDARY'.PadRight(17) + 'PING'.PadRight(9) + 'NOTES') 'DarkCyan'))
+        Out-Line @((S (Tr '  SELECT DNS PROVIDER ') 'White' 'DarkBlue'), (S (Tr '   ping is measured from this PC') 'DarkCyan'))
+        Out-Line @((S ('      ' + (Tr 'PROVIDER').PadRight(23) + (Tr 'PRIMARY').PadRight(17) + (Tr 'SECONDARY').PadRight(17) + 'PING'.PadRight(9) + (Tr 'NOTES')) 'DarkCyan'))
         Show-Rule
         for ($r = 0; $r -lt $rows; $r++) {
             $j = $top + $r
@@ -980,24 +1355,24 @@ function Show-DnsPicker {
             $p1 = if ($src.V4.Count) { $src.V4[0] } elseif ($src.V6.Count) { $src.V6[0] } else { '-' }
             $p2 = if ($src.V4.Count -gt 1) { $src.V4[1] } else { '-' }
             $ms = $script:DnsPing[$d.Id]
-            $pt = if ($null -eq $ms) { '' } elseif ($ms -lt 0) { 'timeout' } else { "$ms ms" }
+            $pt = if ($null -eq $ms) { '' } elseif ($ms -lt 0) { Tr 'timeout' } else { "$ms ms" }
             $pc = if ($null -eq $ms -or $ms -lt 0) { 'DarkGray' } elseif ($ms -le 20) { 'Cyan' } elseif ($ms -le 50) { 'White' } else { 'DarkYellow' }
-            $note = if ($d.Id -eq $best) { 'FASTEST ' + $G.Dot + ' ' + $d.Note } else { $d.Note }
+            $note = if ($d.Id -eq $best) { (Tr 'FASTEST') + ' ' + $G.Dot + ' ' + (Tr $d.Note) } else { Tr $d.Note }
             $nc = if ($d.Id -eq $best) { 'Cyan' } else { 'Gray' }
             $mark = if ($d.Id -eq $curId) { '[' + $G.On + ']' } else { '[ ]' }
             if ($j -eq $ix) {
-                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S ($mark + ' ' + $d.Name.PadRight(23)) 'White' 'DarkBlue'), (S $p1.PadRight(17) 'White' 'DarkBlue'), (S $p2.PadRight(17) 'White' 'DarkBlue'), (S $pt.PadRight(9) $pc 'DarkBlue'), (S $note $nc))
+                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S ($mark + ' ' + (Tr $d.Name).PadRight(23)) 'White' 'DarkBlue'), (S $p1.PadRight(17) 'White' 'DarkBlue'), (S $p2.PadRight(17) 'White' 'DarkBlue'), (S $pt.PadRight(9) $pc 'DarkBlue'), (S $note $nc))
             } else {
                 $mc = if ($d.Id -eq $curId) { 'Cyan' } else { 'DarkGray' }
-                Out-Line @((S '    '), (S $mark $mc), (S (' ' + $d.Name.PadRight(23)) 'Gray'), (S $p1.PadRight(17) 'DarkCyan'), (S $p2.PadRight(17) 'DarkCyan'), (S $pt.PadRight(9) $pc), (S $note $nc))
+                Out-Line @((S '    '), (S $mark $mc), (S (' ' + (Tr $d.Name).PadRight(23)) 'Gray'), (S $p1.PadRight(17) 'DarkCyan'), (S $p2.PadRight(17) 'DarkCyan'), (S $pt.PadRight(9) $pc), (S $note $nc))
             }
         }
         Show-Rule
         $d = $list[$ix]
-        $v6 = if ($d.V6.Count) { $d.V6 -join ', ' } else { 'none' }
-        $doh = if ($d.Doh) { $d.Doh } else { 'not available' }
-        Out-Line @((S '  IPv6 ' 'DarkCyan'), (S $v6 'Gray'), (S '   DoH ' 'DarkCyan'), (S $doh 'Gray'))
-        Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S 'move  ' 'DarkGray'), (S 'Enter/Space ' 'Cyan'), (S 'select  ' 'DarkGray'), (S 'B ' 'Cyan'), (S 'pick fastest  ' 'DarkGray'), (S 'T ' 'Cyan'), (S 'test ping again  ' 'DarkGray'), (S 'Del ' 'Cyan'), (S 'unselect  ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'back' 'DarkGray'))
+        $v6 = if ($d.V6.Count) { $d.V6 -join ', ' } else { Tr 'none' }
+        $doh = if ($d.Doh) { $d.Doh } else { Tr 'not available' }
+        Out-Line @((S (Tr '  IPv6 ') 'DarkCyan'), (S $v6 'Gray'), (S (Tr '   DoH ') 'DarkCyan'), (S $doh 'Gray'))
+        Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S (Tr 'move  ') 'DarkGray'), (S (Tr 'Enter/Space ') 'Cyan'), (S (Tr 'select  ') 'DarkGray'), (S (Tr 'B ') 'Cyan'), (S (Tr 'pick fastest  ') 'DarkGray'), (S (Tr 'T ') 'Cyan'), (S (Tr 'test ping again  ') 'DarkGray'), (S (Tr 'Del ') 'Cyan'), (S (Tr 'unselect  ') 'DarkGray'), (S (Tr 'Esc ') 'Cyan'), (S (Tr 'back') 'DarkGray'))
         $key = [string][Console]::ReadKey($true).Key
         switch ($key) {
             'UpArrow' { $ix = ($ix - 1 + $list.Count) % $list.Count }
@@ -1005,7 +1380,7 @@ function Show-DnsPicker {
             'Home' { $ix = 0 }
             'End' { $ix = $list.Count - 1 }
             'T' {
-                Out-Line @((S '  Measuring ping to DNS providers...' 'Cyan'))
+                Out-Line @((S (Tr '  Measuring ping to DNS providers...') 'Cyan'))
                 $script:DnsPing = Get-DnsLatency
                 $best = Get-BestDns
                 Clear-Host
@@ -1067,23 +1442,23 @@ function Out-Line {
 function Show-Banner {
     $in = 82
     $title = ' C O D E O P T '
-    $sub = 'Windows Tweaks & Optimizer ' + $G.Dot + ' v2.0'
+    $sub = (Tr 'Windows Tweaks & Optimizer') + ' ' + $G.Dot + ' v2.1 ' + $G.Dot + ' ' + $script:Lang.ToUpper()
     $gap = $in - $title.Length - $sub.Length - 2
     Out-Line @((S ('  ' + $G.TL + ($G.H * $in) + $G.TR) 'Blue'))
     Out-Line @((S ('  ' + $G.V + ' ') 'Blue'), (S $title 'White' 'DarkBlue'), (S (' ' * $gap)), (S $sub 'Cyan'), (S ' '), (S $G.V 'Blue'))
     Out-Line @((S ('  ' + $G.BL + ($G.H * $in) + $G.BR) 'Blue'))
-    $dev = if ($HW.Laptop) { 'Laptop' } else { 'Desktop' }
+    $dev = if ($HW.Laptop) { Tr 'Laptop' } else { Tr 'Desktop' }
     $hz = if ($HW.Hz -gt 0) { "$($HW.Hz) Hz" } else { '?' }
     $mhz = if ($HW.RamMHz -gt 0) { " $($HW.RamMHz) MHz" } else { '' }
-    $vbs = if ($HW.Vbs) { 'On' } else { 'Off' }
-    $bl = if ($script:BaseSrc -eq 'est') { "~$($script:Base) FPS est." } else { "$($script:Base) FPS (yours)" }
-    Out-Line @((S '   CPU ' 'DarkCyan'), (S "$($HW.Cpu) $($HW.Cores)C/$($HW.Threads)T" 'White'), (S '   GPU ' 'DarkCyan'), (S "$($HW.Gpu) $($HW.Vram) GB" 'White'))
-    Out-Line @((S '   RAM ' 'DarkCyan'), (S "$($HW.RamGB) GB$mhz x$($HW.Sticks)" 'White'), (S '   DISK ' 'DarkCyan'), (S $HW.Disk 'White'), (S '   DISPLAY ' 'DarkCyan'), (S $hz 'White'), (S '   DEVICE ' 'DarkCyan'), (S $dev 'White'), (S '   VBS ' 'DarkCyan'), (S $vbs 'White'))
-    Out-Line @((S '   OS ' 'DarkCyan'), (S $os 'White'), (S '   BOTTLENECK ' 'DarkCyan'), (S $HW.Bound 'Cyan'), (S '   BASE ' 'DarkCyan'), (S $bl 'Cyan'))
+    $vbs = if ($HW.Vbs) { Tr 'On' } else { Tr 'Off' }
+    $bl = if ($script:BaseSrc -eq 'est') { Tr '~{0} FPS est.' $script:Base } else { Tr '{0} FPS (yours)' $script:Base }
+    Out-Line @((S (Tr '   CPU ') 'DarkCyan'), (S "$($HW.Cpu) $($HW.Cores)C/$($HW.Threads)T" 'White'), (S (Tr '   GPU ') 'DarkCyan'), (S "$($HW.Gpu) $($HW.Vram) GB" 'White'))
+    Out-Line @((S (Tr '   RAM ') 'DarkCyan'), (S "$($HW.RamGB) GB$mhz x$($HW.Sticks)" 'White'), (S (Tr '   DISK ') 'DarkCyan'), (S $HW.Disk 'White'), (S (Tr '   DISPLAY ') 'DarkCyan'), (S $hz 'White'), (S (Tr '   DEVICE ') 'DarkCyan'), (S $dev 'White'), (S (Tr '   VBS ') 'DarkCyan'), (S $vbs 'White'))
+    Out-Line @((S (Tr '   OS ') 'DarkCyan'), (S $os 'White'), (S (Tr '   BOTTLENECK ') 'DarkCyan'), (S $HW.Bound 'Cyan'), (S (Tr '   BASE ') 'DarkCyan'), (S $bl 'Cyan'))
     if ($script:TplName) {
-        $by = if ($script:TplAuthor) { " by $($script:TplAuthor)" } else { '' }
-        $wn = if ($script:TplWarn.Count) { "   $($script:TplWarn.Count) warning(s)" } else { '' }
-        Out-Line @((S '   TEMPLATE ' 'DarkCyan'), (S $script:TplName 'White'), (S $by 'DarkCyan'), (S $wn 'DarkYellow'))
+        $by = if ($script:TplAuthor) { Tr ' by {0}' $script:TplAuthor } else { '' }
+        $wn = if ($script:TplWarn.Count) { Tr '   {0} warning(s)' $script:TplWarn.Count } else { '' }
+        Out-Line @((S (Tr '   TEMPLATE ') 'DarkCyan'), (S $script:TplName 'White'), (S $by 'DarkCyan'), (S $wn 'DarkYellow'))
     }
 }
 
@@ -1098,7 +1473,7 @@ function Draw {
     $seg.Add((S '  '))
     for ($k = 0; $k -lt $Cats.Count; $k++) {
         $cnt = @($Tweaks | Where-Object { $_.Cat -eq $Cats[$k] -and $_.Sel }).Count
-        $label = if ($cnt -gt 0) { " $($Cats[$k]) $cnt " } else { " $($Cats[$k]) " }
+        $label = if ($cnt -gt 0) { " $(Tr $Cats[$k]) $cnt " } else { " $(Tr $Cats[$k]) " }
         if ($k -eq $script:c) { $seg.Add((S $label 'White' 'DarkBlue')) }
         elseif ($cnt -gt 0) { $seg.Add((S $label 'Cyan')) }
         else { $seg.Add((S $label 'DarkCyan')) }
@@ -1107,7 +1482,7 @@ function Draw {
     Out-Line $seg
     Show-Rule
     $more = $script:top -gt 0
-    Out-Line @((S $(if ($more) { "    $($G.Tri) more" } else { '' }) 'DarkBlue'))
+    Out-Line @((S $(if ($more) { "    $($G.Tri) " + (Tr 'more') } else { '' }) 'DarkBlue'))
     for ($r = 0; $r -lt $Rows; $r++) {
         $j = $script:top + $r
         if ($j -lt $Items.Count) {
@@ -1115,75 +1490,75 @@ function Draw {
             $cur = ($j -eq $script:i)
             $box = if ($t.Sel) { '[' + $G.On + ']' } else { '[ ]' }
             $bf = if ($t.Sel) { 'Cyan' } else { 'DarkGray' }
-            $rec = if ($t.Rec) { ' REC' } else { '' }
+            $rec = if ($t.Rec) { ' ' + (Tr 'REC') } else { '' }
             $tf = if ($t.Fps) { 'Cyan' } elseif ($t.Tags -match 'SECURITY|SAFE') { 'Blue' } else { 'DarkCyan' }
             $est = Get-FpsText $t.GMin $t.GMax
             $ef = if ($t.GMin -lt 0) { 'DarkYellow' } else { 'Cyan' }
             if ($cur) {
-                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + (Get-TweakName $t).PadRight(38)) 'White' 'DarkBlue'), (S ' '), (S $t.Tags.PadRight(23) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkCyan'))
+                Out-Line @((S ('  ' + $G.Ptr + ' ') 'Cyan'), (S $box $bf 'DarkBlue'), (S (' ' + (Get-TweakName $t).PadRight($script:NameW)) 'White' 'DarkBlue'), (S ' '), (S (Get-TagText $t.Tags).PadRight($script:TagW) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkCyan'))
             } else {
                 $nf = if ($t.Sel) { 'White' } else { 'Gray' }
-                Out-Line @((S '    '), (S $box $bf), (S (' ' + (Get-TweakName $t).PadRight(38)) $nf), (S ' '), (S $t.Tags.PadRight(23) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkBlue'))
+                Out-Line @((S '    '), (S $box $bf), (S (' ' + (Get-TweakName $t).PadRight($script:NameW)) $nf), (S ' '), (S (Get-TagText $t.Tags).PadRight($script:TagW) $tf), (S $est.PadRight(14) $ef), (S $rec 'DarkBlue'))
             }
         } else {
             Out-Line @((S ''))
         }
     }
     $less = ($script:top + $Rows) -lt $Items.Count
-    Out-Line @((S $(if ($less) { "    $($G.TriD) more" } else { '' }) 'DarkBlue'))
+    Out-Line @((S $(if ($less) { "    $($G.TriD) " + (Tr 'more') } else { '' }) 'DarkBlue'))
     Show-Rule
     $cur = if ($Items.Count) { $Items[$script:i] } else { $null }
-    $desc = if ($cur) { $cur.Desc } else { '' }
+    $desc = if ($cur) { Get-TweakDesc $cur } else { '' }
     if ($cur -and $cur.Pick -and $cur.Sel) {
         $o = Get-DnsChoice $cur
         $ips = @(@($o.V4) + @($o.V6) | Select-Object -First 2)
         $ipt = if ($ips.Count) { ' (' + ($ips -join ', ') + ')' } else { '' }
-        $desc = "Using $($o.Name)$ipt. $($o.Note). Press Space to change."
+        $desc = Tr 'Using {0}{1}. {2}. Press Space to change.' (Tr $o.Name) $ipt (Tr $o.Note)
     }
-    $dt = if ($cur -and $cur.Tags) { '[' + $cur.Tags + '] ' } else { '' }
+    $dt = if ($cur -and $cur.Tags) { '[' + (Get-TagText $cur.Tags) + '] ' } else { '' }
     $df = if ($cur -and $cur.Fps) { 'Cyan' } else { 'DarkCyan' }
     Out-Line @((S ('  ' + [string][char]0x00BB + ' ') 'Cyan'), (S $dt $df), (S $desc 'Gray'))
     if ($cur -and ($cur.GMin -ne 0 -or $cur.GMax -ne 0)) {
         $ec = if ($cur.GMin -lt 0) { 'DarkYellow' } else { 'Cyan' }
-        Out-Line @((S '    Est. ' 'DarkCyan'), (S (Get-FpsText $cur.GMin $cur.GMax) $ec), (S ('  ({0:+0;-0;0}% to {1:+0;-0;0}%)  ' -f $cur.GMin, $cur.GMax) 'DarkCyan'), (S $cur.GWhy 'Gray'))
+        Out-Line @((S (Tr '    Est. ') 'DarkCyan'), (S (Get-FpsText $cur.GMin $cur.GMax) $ec), (S (Tr '  ({0:+0;-0;0}% to {1:+0;-0;0}%)  ' $cur.GMin $cur.GMax) 'DarkCyan'), (S (Tr $cur.GWhy $cur.GArg) 'Gray'))
     } elseif ($cur -and $cur.GWhy) {
-        Out-Line @((S '    Est. ' 'DarkCyan'), (S 'no FPS change  ' 'DarkGray'), (S $cur.GWhy 'Gray'))
+        Out-Line @((S (Tr '    Est. ') 'DarkCyan'), (S (Tr 'no FPS change  ') 'DarkGray'), (S (Tr $cur.GWhy $cur.GArg) 'Gray'))
     } else {
-        Out-Line @((S '    Est. ' 'DarkCyan'), (S 'no direct FPS impact' 'DarkGray'))
+        Out-Line @((S (Tr '    Est. ') 'DarkCyan'), (S (Tr 'no direct FPS impact') 'DarkGray'))
     }
     $rbt = if ($cur) { $cur.Reboot } else { 'None' }
-    $rt, $rc = switch ($rbt) { 'Restart' { 'Restart required', 'DarkYellow' } 'Sign out' { 'Sign out required', 'Yellow' } default { 'No restart needed', 'Cyan' } }
+    $rt, $rc = switch ($rbt) { 'Restart' { (Tr 'Restart required'), 'DarkYellow' } 'Sign out' { (Tr 'Sign out required'), 'Yellow' } default { (Tr 'No restart needed'), 'Cyan' } }
     $nr = @($Tweaks | Where-Object { $_.Sel -and $_.Reboot -eq 'Restart' }).Count
     $ns = @($Tweaks | Where-Object { $_.Sel -and $_.Reboot -eq 'Sign out' }).Count
     $idt = if ($cur) { $cur.Id } else { '' }
-    Out-Line @((S '    Apply ' 'DarkCyan'), (S $rt.PadRight(19) $rc), (S 'ID ' 'DarkCyan'), (S $idt.PadRight(38) 'DarkGray'), (S 'Selection needs ' 'DarkCyan'), (S "$nr restart, $ns sign out" 'Gray'))
+    Out-Line @((S (Tr '    Apply ') 'DarkCyan'), (S $rt.PadRight(22) $rc), (S (Tr 'ID ') 'DarkCyan'), (S $idt.PadRight(38) 'DarkGray'), (S (Tr 'Selection needs ') 'DarkCyan'), (S (Tr '{0} restart, {1} sign out' $nr $ns) 'Gray'))
     $sel = @($Tweaks | Where-Object Sel).Count
     $tt = Get-Total
     $tg = Get-FpsText $tt[0] $tt[1]
     if (-not $tg) { $tg = '+0 FPS' }
-    $tp = '  ({0:+0;-0;0}% to {1:+0;-0;0}%)' -f $tt[0], $tt[1]
-    Out-Line @((S '  Selected ' 'DarkCyan'), (S "$sel" 'White'), (S " of $($Tweaks.Count)" 'DarkCyan'), (S '   Est. total gain ' 'DarkCyan'), (S $tg 'Cyan'), (S $tp 'DarkCyan'), (S "   Category $($script:c + 1)/$($Cats.Count)" 'DarkCyan'))
-    Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S 'move  ' 'DarkGray'), (S "$($G.Lf)$($G.Rt) " 'Cyan'), (S 'category  ' 'DarkGray'), (S 'Space ' 'Cyan'), (S 'toggle / pick  ' 'DarkGray'), (S 'A ' 'Cyan'), (S 'all in tab  ' 'DarkGray'), (S 'R ' 'Cyan'), (S 'recommended  ' 'DarkGray'), (S 'C ' 'Cyan'), (S 'clear' 'DarkGray'))
-    Out-Line @((S '  F ' 'Cyan'), (S 'my FPS  ' 'DarkGray'), (S 'E ' 'Cyan'), (S 'export template  ' 'DarkGray'), (S 'Enter ' 'Cyan'), (S 'apply  ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'exit' 'DarkGray'))
+    $tp = Tr '  ({0:+0;-0;0}% to {1:+0;-0;0}%)' $tt[0] $tt[1]
+    Out-Line @((S (Tr '  Selected ') 'DarkCyan'), (S "$sel" 'White'), (S (Tr ' of {0}' $Tweaks.Count) 'DarkCyan'), (S (Tr '   Est. total gain ') 'DarkCyan'), (S $tg 'Cyan'), (S $tp 'DarkCyan'), (S (Tr '   Category {0}/{1}' ($script:c + 1) $Cats.Count) 'DarkCyan'))
+    Out-Line @((S "  $($G.Up)$($G.Dn) " 'Cyan'), (S (Tr 'move  ') 'DarkGray'), (S "$($G.Lf)$($G.Rt) " 'Cyan'), (S (Tr 'category  ') 'DarkGray'), (S (Tr 'Space ') 'Cyan'), (S (Tr 'toggle / pick  ') 'DarkGray'), (S (Tr 'A ') 'Cyan'), (S (Tr 'all in tab  ') 'DarkGray'), (S (Tr 'R ') 'Cyan'), (S (Tr 'recommended  ') 'DarkGray'), (S (Tr 'C ') 'Cyan'), (S (Tr 'clear') 'DarkGray'))
+    Out-Line @((S (Tr '  F ') 'Cyan'), (S (Tr 'my FPS  ') 'DarkGray'), (S (Tr 'E ') 'Cyan'), (S (Tr 'export template  ') 'DarkGray'), (S (Tr 'L ') 'Cyan'), (S (Tr 'language PL/EN  ') 'DarkGray'), (S (Tr 'Enter ') 'Cyan'), (S (Tr 'apply  ') 'DarkGray'), (S (Tr 'Esc ') 'Cyan'), (S (Tr 'exit') 'DarkGray'))
 }
 
 function Invoke-Apply {
     $list = @($Tweaks | Where-Object Sel)
     if ($list.Count -eq 0) {
-        if ($script:AutoApply) { Write-Host '  The template selects no tweaks. Nothing to apply.' -ForegroundColor DarkYellow }
+        if ($script:AutoApply) { Write-Host (Tr '  The template selects no tweaks. Nothing to apply.') -ForegroundColor DarkYellow }
         return
     }
     Clear-Host
     Show-Banner
     Out-Line @((S ''))
-    Out-Line @((S '  Ready to apply ' 'Gray'), (S "$($list.Count)" 'White'), (S ' tweaks.  ' 'Gray'), (S 'Enter ' 'Cyan'), (S 'confirm   ' 'DarkGray'), (S 'Esc ' 'Cyan'), (S 'cancel' 'DarkGray'))
+    Out-Line @((S (Tr '  Ready to apply ') 'Gray'), (S "$($list.Count)" 'White'), (S (Tr ' tweaks.  ') 'Gray'), (S (Tr 'Enter ') 'Cyan'), (S (Tr 'confirm   ') 'DarkGray'), (S (Tr 'Esc ') 'Cyan'), (S (Tr 'cancel') 'DarkGray'))
     $tt = Get-Total
     $tg = Get-FpsText $tt[0] $tt[1]
     if (-not $tg) { $tg = '+0 FPS' }
-    Out-Line @((S '  Estimated gain ' 'DarkCyan'), (S $tg 'Cyan'), (S ('  ({0:+0;-0;0}% to {1:+0;-0;0}%) from a base of {2} FPS' -f $tt[0], $tt[1], $script:Base) 'DarkCyan'))
+    Out-Line @((S (Tr '  Estimated gain ') 'DarkCyan'), (S $tg 'Cyan'), (S (Tr '  ({0:+0;-0;0}% to {1:+0;-0;0}%) from a base of {2} FPS' $tt[0] $tt[1] $script:Base) 'DarkCyan'))
     $nr = @($list | Where-Object Reboot -eq 'Restart').Count
     $ns = @($list | Where-Object Reboot -eq 'Sign out').Count
-    Out-Line @((S '  Needs ' 'DarkCyan'), (S "$nr restart" 'DarkYellow'), (S ', ' 'DarkCyan'), (S "$ns sign out" 'Yellow'), (S ', ' 'DarkCyan'), (S "$($list.Count - $nr - $ns) instant" 'Cyan'))
+    Out-Line @((S (Tr '  Needs ') 'DarkCyan'), (S (Tr '{0} restart' $nr) 'DarkYellow'), (S ', ' 'DarkCyan'), (S (Tr '{0} sign out' $ns) 'Yellow'), (S ', ' 'DarkCyan'), (S (Tr '{0} instant' ($list.Count - $nr - $ns)) 'Cyan'))
     if (-not $script:SkipConfirm) {
         while ($true) {
             $k = [Console]::ReadKey($true).Key
@@ -1196,15 +1571,15 @@ function Invoke-Apply {
     foreach ($t in $list) {
         $k++
         Write-Host ('  ' + ("[$k/$n]").PadRight(8)) -ForegroundColor DarkCyan -NoNewline
-        Write-Host (Get-TweakName $t).PadRight(40) -ForegroundColor White -NoNewline
-        Write-Host $t.Tags.PadRight(24) -ForegroundColor $(if ($t.Fps) { 'Cyan' } else { 'DarkCyan' }) -NoNewline
+        Write-Host (Get-TweakName $t).PadRight($script:NameW + 2) -ForegroundColor White -NoNewline
+        Write-Host (Get-TagText $t.Tags).PadRight($script:TagW + 1) -ForegroundColor $(if ($t.Fps) { 'Cyan' } else { 'DarkCyan' }) -NoNewline
         try {
             & $t.Do $t *> $null
-            Write-Host " $($G.Ok) done" -ForegroundColor Cyan -NoNewline
-            Write-Host $(switch ($t.Reboot) { 'Restart' { '  restart' } 'Sign out' { '  sign out' } default { '' } }) -ForegroundColor DarkYellow
+            Write-Host (" $($G.Ok) " + (Tr 'done')) -ForegroundColor Cyan -NoNewline
+            Write-Host $(switch ($t.Reboot) { 'Restart' { Tr '  restart' } 'Sign out' { Tr '  sign out' } default { '' } }) -ForegroundColor DarkYellow
             $ok++
         } catch {
-            Write-Host ' x failed' -ForegroundColor Red
+            Write-Host (Tr ' x failed') -ForegroundColor Red
         }
         $t.Sel = $false
     }
@@ -1218,32 +1593,32 @@ function Invoke-Apply {
     Write-Host ''
     $nr = @($list | Where-Object Reboot -eq 'Restart').Count
     $ns = @($list | Where-Object Reboot -eq 'Sign out').Count
-    Write-Host '  Estimated gain: ' -ForegroundColor DarkCyan -NoNewline
+    Write-Host (Tr '  Estimated gain: ') -ForegroundColor DarkCyan -NoNewline
     Write-Host $tg -ForegroundColor Cyan -NoNewline
-    Write-Host '  (real results depend on the game, settings and drivers)' -ForegroundColor DarkGray
+    Write-Host (Tr '  (real results depend on the game, settings and drivers)') -ForegroundColor DarkGray
     $need = ''
-    if ($nr) { Write-Host "  $nr tweak(s) need a restart to take effect." -ForegroundColor DarkYellow; $need = 'Restart' }
-    elseif ($ns) { Write-Host "  $ns tweak(s) need you to sign out and back in." -ForegroundColor Yellow; $need = 'Sign out' }
-    else { Write-Host '  All changes are active now. No restart needed.' -ForegroundColor Cyan }
+    if ($nr) { Write-Host (Tr '  {0} tweak(s) need a restart to take effect.' $nr) -ForegroundColor DarkYellow; $need = 'Restart' }
+    elseif ($ns) { Write-Host (Tr '  {0} tweak(s) need you to sign out and back in.' $ns) -ForegroundColor Yellow; $need = 'Sign out' }
+    else { Write-Host (Tr '  All changes are active now. No restart needed.') -ForegroundColor Cyan }
     if ($need) {
         $go = $false
         if ($script:RestartMode -eq 'always') { $go = $true }
         elseif ($script:RestartMode -eq 'ask') {
-            Write-Host "  $need now? " -ForegroundColor Cyan -NoNewline
-            Write-Host '[Y] yes  [N] later' -ForegroundColor DarkGray
+            Write-Host (Tr $(if ($need -eq 'Restart') { '  Restart now? ' } else { '  Sign out now? ' })) -ForegroundColor Cyan -NoNewline
+            Write-Host (Tr '[Y] yes  [N] later') -ForegroundColor DarkGray
             while ($true) {
                 $kk = [string][Console]::ReadKey($true).Key
-                if ($kk -eq 'Y') { $go = $true; break }
+                if ($kk -in 'Y', 'T') { $go = $true; break }
                 if ($kk -in 'N', 'Escape', 'Enter') { break }
             }
         }
         if ($go) {
             [Console]::CursorVisible = $true
             if ($need -eq 'Restart') {
-                Write-Host '  Restarting in 5 seconds...' -ForegroundColor Cyan
+                Write-Host (Tr '  Restarting in 5 seconds...') -ForegroundColor Cyan
                 shutdown.exe /r /t 5 /c 'CodeOpt is restarting your PC to apply tweaks.' | Out-Null
             } else {
-                Write-Host '  Signing out...' -ForegroundColor Cyan
+                Write-Host (Tr '  Signing out...') -ForegroundColor Cyan
                 Start-Sleep -Seconds 2
                 shutdown.exe /l | Out-Null
             }
@@ -1251,7 +1626,7 @@ function Invoke-Apply {
         }
     }
     if ($script:AutoApply) { return }
-    Write-Host '  Press any key to return to the menu...' -ForegroundColor DarkGray
+    Write-Host (Tr '  Press any key to return to the menu...') -ForegroundColor DarkGray
     [void][Console]::ReadKey($true)
     Clear-Host
 }
@@ -1261,6 +1636,7 @@ $script:TomlErr = [System.Collections.Generic.List[string]]::new()
 $script:RestartMode = 'ask'; $script:AutoApply = $false; $script:SkipConfirm = $false; $script:DnsPing = $null
 
 $Host.UI.RawUI.WindowTitle = 'CodeOpt Optimizer'
+Update-Layout
 $Host.UI.RawUI.BackgroundColor = 'Black'
 [Console]::CursorVisible = $false
 Clear-Host
@@ -1274,11 +1650,11 @@ if ($Cli.Template) {
     if ($script:TplWarn.Count) {
         Show-Banner
         Out-Line @((S ''))
-        Out-Line @((S '  TEMPLATE WARNINGS ' 'White' 'DarkBlue'), (S "   $($Cli.Template)" 'DarkCyan'))
+        Out-Line @((S (Tr '  TEMPLATE WARNINGS ') 'White' 'DarkBlue'), (S "   $($Cli.Template)" 'DarkCyan'))
         foreach ($w in $script:TplWarn) { Out-Line @((S "  $($G.Dot) " 'DarkYellow'), (S $w 'Gray')) }
         Out-Line @((S ''))
-        if (-not $ok) { Out-Line @((S '  The template could not be loaded. Press any key to open the menu...' 'DarkGray')) }
-        elseif (-not $script:SkipConfirm) { Out-Line @((S '  Press any key to continue, Esc to quit...' 'DarkGray')) }
+        if (-not $ok) { Out-Line @((S (Tr '  The template could not be loaded. Press any key to open the menu...') 'DarkGray')) }
+        elseif (-not $script:SkipConfirm) { Out-Line @((S (Tr '  Press any key to continue, Esc to quit...') 'DarkGray')) }
         if (-not $ok -or -not $script:SkipConfirm) {
             if ([Console]::ReadKey($true).Key -eq 'Escape') { [Console]::CursorVisible = $true; [Console]::ResetColor(); exit }
         }
@@ -1289,7 +1665,7 @@ if ($Cli.Template) {
 if ($script:AutoApply) {
     Invoke-Apply
     if (-not $script:SkipConfirm) {
-        Write-Host '  Press any key to exit...' -ForegroundColor DarkGray
+        Write-Host (Tr '  Press any key to exit...') -ForegroundColor DarkGray
         [void][Console]::ReadKey($true)
     }
     [Console]::CursorVisible = $true
@@ -1331,10 +1707,10 @@ while ($run) {
             Clear-Host
             Show-Banner
             Out-Line @((S ''))
-            Out-Line @((S '  Template saved  ' 'Cyan'), (S $p 'White'))
-            Out-Line @((S '  Load it with    ' 'DarkCyan'), (S ".\CodeOpt.ps1 --template `"$p`"" 'Gray'))
+            Out-Line @((S (Tr '  Template saved  ') 'Cyan'), (S $p 'White'))
+            Out-Line @((S (Tr '  Load it with    ') 'DarkCyan'), (S ".\CodeOpt.ps1 --template `"$p`"" 'Gray'))
             Out-Line @((S ''))
-            Out-Line @((S '  Press any key...' 'DarkGray'))
+            Out-Line @((S (Tr '  Press any key...') 'DarkGray'))
             [void][Console]::ReadKey($true)
             $lastW = 0
         }
@@ -1349,12 +1725,18 @@ while ($run) {
             Clear-Host
             Show-Banner
             Out-Line @((S ''))
-            Out-Line @((S '  Type the FPS you get now in your game for exact numbers. Leave empty for the hardware estimate.' 'Gray'))
-            Write-Host '  Your FPS: ' -ForegroundColor Cyan -NoNewline
+            Out-Line @((S (Tr '  Type the FPS you get now in your game for exact numbers. Leave empty for the hardware estimate.') 'Gray'))
+            Write-Host (Tr '  Your FPS: ') -ForegroundColor Cyan -NoNewline
             $v = Read-Host
             if ($v -match '^\d+$' -and [int]$v -gt 0) { $script:Base = [int]$v; $script:BaseSrc = 'user' }
             else { $script:Base = $HW.BaseFps; $script:BaseSrc = 'est' }
             [Console]::CursorVisible = $false
+            $lastW = 0
+        }
+        'L' {
+            $script:Lang = if ($script:Lang -eq 'pl') { 'en' } else { 'pl' }
+            Set-Reg 'HKCU:\Software\CodeOpt' 'Language' $script:Lang 'String'
+            Update-Layout
             $lastW = 0
         }
         'Enter' { Invoke-Apply; $lastW = 0 }
@@ -1367,5 +1749,5 @@ while ($run) {
 [Console]::ResetColor()
 Clear-Host
 Write-Host ''
-Write-Host '  CodeOpt closed. Restart to apply all changes.' -ForegroundColor Cyan
+Write-Host (Tr '  CodeOpt closed. Restart to apply all changes.') -ForegroundColor Cyan
 Write-Host ''
